@@ -1,0 +1,82 @@
+schema: engram.capabilities/v1
+instrument: ENGRAM
+contract: trinity/ENGRAM.md
+submodule: harness
+parent_project_root: bia
+binding: bound by the parent memory/approval, so every state flip and every bucket_d_status
+  transition re-triggers Phase 0.5 sign-off at the parent root
+posture:
+  summary: seeded by Phase G step 9 at the default posture. Every optional capability
+    sits at default and no capability claims implemented
+  rule: an undefined declared capability is decorative, never raises disposition and
+    never replaces the default, while a claimed implemented status with absent defining
+    bytes caps the ledger at BROKEN
+  scaffold_kind: honest scaffold. The ENGRAM harness modules are not built inside this
+    submodule, so every required instrument is honestly implemented false rather than
+    reported present
+capabilities:
+- id: model_identity
+  state: default
+  default_definition: model identity rests on provider signatures, registry attestations
+    and transcript hashes verified against memory/roots.yaml at the parent root
+  stronger_policy_declared: false
+  defining_bytes: absent
+- id: ledger_integrity_witness
+  state: default
+  default_definition: ledger integrity rests on the signed Merkle checkpoint log plus
+    the deterministic recovery procedure at the parent root
+  multi_operator_witness_network_declared: false
+  defining_bytes: absent
+- id: orthogonality
+  state: default
+  default_definition: orthogonality groups on hardness rows are authored priors
+  fitted_from_signed_pilot_outcomes: false
+  defining_bytes: absent
+- id: contamination
+  state: default
+  default_definition: no corpus snapshot digest is named or pinned by ENGRAM
+  corpus_snapshot_digest: null
+  defining_bytes: absent
+bucket_d_status:
+  generated_by: ENGRAM Phase G step 9 from the filesystem of this submodule
+  drift_rule: this block is never hand-maintained and any drift between it and the
+    filesystem fails closed
+  instruments:
+  - name: ingestor
+    module: memory/engram/ingest.py
+    bytes_present: false
+    implemented: false
+    liveness_proven: false
+  - name: signature_verifier
+    module: memory/engram/verify.py
+    bytes_present: false
+    implemented: false
+    liveness_proven: false
+  - name: freshener
+    module: memory/engram/fresh.py
+    bytes_present: false
+    implemented: false
+    liveness_proven: false
+  - name: checkpointer
+    module: memory/engram/checkpoint.py
+    bytes_present: false
+    implemented: false
+    liveness_proven: false
+  - name: recovery_procedure
+    module: memory/engram/recover.py
+    bytes_present: false
+    implemented: false
+    liveness_proven: false
+  - name: provenance_gate
+    module: memory/engram/provenance.py
+    bytes_present: false
+    implemented: false
+    liveness_proven: false
+  assessment:
+    theater_rows: 0
+    theater_rule: any row carrying implemented true and liveness_proven false caps
+      the ledger at BROKEN with reason deterministic_lane_inert
+    honest_scaffold: true
+    honest_scaffold_rule: every instrument honestly implemented false over a zero
+      CFER ledger is benign STALE and never caps at BROKEN for that alone
+    disposition_ceiling_from_this_block: STALE
