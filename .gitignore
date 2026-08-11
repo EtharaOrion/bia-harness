@@ -1,5 +1,17 @@
+# Data + caches
 fineweb10B/
 pylog124M/
 __pycache__/
 logs/
 .DS_Store
+.pytest_cache/
+
+# Per-invocation work dirs (harness runner creates timestamped dirs here)
+runs/*_seed*_*/
+
+# Ephemeral test scratch
+/tmp/asr*
+tasks/
+proxy/
+runs/
+bia-venv/

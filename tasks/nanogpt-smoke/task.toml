@@ -1,0 +1,29 @@
+version = "1.0"
+
+[task]
+name = "nanogpt/env-smoke"
+
+[metadata]
+author_name = "bia-harness"
+difficulty = "easy"
+category = "infra"
+tags = ["smoke", "env-check"]
+description = "Environment sanity check: verify torch is importable and CUDA is (optionally) available. Not GPU-required."
+
+[agent]
+timeout_sec = 300.0
+
+[verifier]
+timeout_sec = 60.0
+environment_mode = "shared"
+
+[environment]
+build_timeout_sec = 900.0
+docker_image = "python:3.12-slim"
+cpus = 2
+memory_mb = 16384
+storage_mb = 10240
+gpus = 0
+gpu_types = []
+network_mode = "allowlist"
+allowed_hosts = ["pypi.org", "*.pypi.org", "files.pythonhosted.org"]

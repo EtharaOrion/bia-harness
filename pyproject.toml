@@ -1,0 +1,18 @@
+[project]
+name = "bia-harness"
+version = "0.1.0"
+description = "Path-3 hybrid harness for modded-nanogpt Track-3 optimization speedrun (policy md + Harbor task + runner)."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    "records",
+    "legacy",
+    ".pytest_cache",
+    "runs",
+    "policy/scratchpad",
+    "tasks/nanogpt-speedrun/environment",
+]
+addopts = "-q"
