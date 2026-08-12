@@ -1,0 +1,17 @@
+version = "1.0"
+
+[[shared]]
+src = "shared/train_gpt_simple.py"
+dst = "environment/train_gpt_simple.py"
+
+[[shared]]
+src = "shared/data/cached_fineweb10B.py"
+dst = "environment/cached_fineweb10B.py"
+
+[[shared]]
+src = "shared/track3_README.md"
+dst = "environment/track3_README.md"
+
+[variant]
+dst = "environment/train_gpt_simple.py"
+required = false

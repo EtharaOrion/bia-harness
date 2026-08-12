@@ -1,9 +1,6 @@
+torch==2.11
+huggingface_hub>=0.24
 numpy
 tqdm
-torch==2.10
-huggingface-hub
-kernels
-setuptools
-typing-extensions==4.15.0
-datasets
-tiktoken
+httpx>=0.27
+pytest>=8

@@ -1,0 +1,10 @@
+version = "1.0"
+
+# Out-of-tree mount config for the bia task at
+#   tasks/b92e1502-7efe-5004-af4a-a7715da77b41 (symlink → personal-docs)
+# The task's Dockerfile has a sanitization step that fails if unexpected files
+# are added inside the task tree, so we cannot drop mount.toml in-tree.
+
+[variant]
+dst = "submission/optimizer.py"
+required = false

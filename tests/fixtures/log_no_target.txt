@@ -1,0 +1,11 @@
+Running pid=99999
+logs/deadbeef-fake-fake-fake-cafebabecafe.txt
+step:125/2900 val_loss:4.44640 train_time:280.499s step_avg:2243.99ms
+step:250/2900 val_loss:4.07594 train_time:557.833s step_avg:2231.33ms
+step:375/2900 val_loss:3.93661 train_time:834.556s step_avg:2225.48ms
+step:500/2900 val_loss:3.81385 train_time:1111.249s step_avg:2222.50ms
+step:625/2900 val_loss:3.74858 train_time:1387.848s step_avg:2220.56ms
+step:750/2900 val_loss:3.70694 train_time:1664.440s step_avg:2219.25ms
+step:875/2900 val_loss:3.66828 train_time:1941.155s step_avg:2218.46ms
+step:1000/2900 val_loss:3.63118 train_time:2217.725s step_avg:2217.73ms
+Training crashed at step 1050 with CUDA OOM.
