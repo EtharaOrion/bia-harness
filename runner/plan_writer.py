@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -79,3 +80,24 @@ def update_plan(plan_path: Path, summary: dict[str, Any]) -> None:
 
 def update_goal(goal_path: Path, summary: dict[str, Any]) -> None:
     write_between_markers(goal_path, FRONTIER, render_frontier_table(summary))
+
+
+def freeze_run_plan(policy_dir: Path, run_num: int) -> Path:
+    run_dir = policy_dir / f"run{run_num:02d}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "variants").mkdir(parents=True, exist_ok=True)
+    for name in ("plan.md", "goal.md"):
+        src = policy_dir / name
+        dst = run_dir / name
+        if src.is_file() and not dst.exists():
+            shutil.copy2(src, dst)
+    return run_dir
+
+
+def link_top_level_plan_to_run(policy_dir: Path, run_num: int) -> None:
+    src_plan = policy_dir / f"run{run_num:02d}" / "plan.md"
+    src_goal = policy_dir / f"run{run_num:02d}" / "goal.md"
+    if src_plan.is_file():
+        (policy_dir / "plan.md").write_text(src_plan.read_text())
+    if src_goal.is_file():
+        (policy_dir / "goal.md").write_text(src_goal.read_text())

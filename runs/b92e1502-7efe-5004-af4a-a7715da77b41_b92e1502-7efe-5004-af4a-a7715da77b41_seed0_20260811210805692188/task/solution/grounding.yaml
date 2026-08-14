@@ -1,0 +1,382 @@
+schema: forge.grounding/v1
+purpose: >-
+  Single private derivation source. Every generated artifact in this bundle descends from
+  this file through solution/recompute.py: the corpus signatures, the golden trajectory,
+  the checker fixtures, solve.sh, TRUTH.md, rubrics.json, tests/test_output.py, and the
+  canonical payload of provenance.yaml. Nothing generated is hand-authored, and Phase 2
+  step 7 requires every one of them to regenerate bit-identically.
+
+task_identity:
+  family: track3-optimizer-search
+  archetype: AR5
+  upstream: KellerJordan/modded-nanogpt records/track_3_optimization
+
+reward_schema:
+  baseline_steps: 3500
+  target_steps: 2900
+  target_loss: 3.28
+  significance_margin: 0.004
+  min_seeds: 2
+  full_reward: 1.0
+  range: [0.0, 1.0]
+  higher_is_better: true
+  formula: >-
+    clip((baseline_steps - graded_step) / (baseline_steps - target_steps), 0, 1) when every
+    gate passes, otherwise exactly 0.0
+  gates_all_required: [gate_novelty, gate_integrity, gate_noise_floor]
+
+frozen_contract:
+  global_batch_tokens: 524288
+  microbatch_sequences_per_forward: 64
+  sequence_length: 1024
+  legal_world_sizes: [1, 2, 4, 8]
+  forward_backward_per_step: 1
+  val_line_regex: 'step:(\d+)/\d+\s+val_loss:([0-9.]+)'
+  source_of_truth: harness/records/track_3_optimization/train_gpt_simple.py
+  source_sha256: d39470e5b0535baf9c6caf7dbcd15efa79d8eacc9badf6e7c45b536e8537deec
+
+novelty_gate:
+  measurement_context: graded_training_run
+  capture_module: environment/runner/capture.py
+  scoring_module: solution/novelty.py
+  corpus_dir: solution/corpus
+  capture_scope: all_2d_parameters_every_step
+  min_steps: 8
+  score_version: inrun/v2
+  design_note: >-
+    An earlier bundle scored novelty with a standalone probe over synthetic tensors, in a
+    context disjoint from training. Attack A3 defeated it by detecting that context and
+    branching: a novel rule under the probe, a copied record rule during the real run.
+    Moving the measurement inside the graded run was the correct architectural response and
+    is kept. What was wrong was how it was implemented. The window of measured steps was
+    selected under a key, and the runner exec'd the submitted optimizer inside the very
+    process that held that key, so a submission could read the key and recompute the window
+    exactly. Worse, a submission holding the key could forge the telemetry chain outright,
+    so the chain authenticated nothing. Protecting the key harder does not fix a measurement
+    whose soundness rests on a secret, because the adversary moves last. Two changes remove
+    the dependence. First, capture is dense over every step and every two-dimensional
+    parameter, so there is no window to predict and nothing to branch into even if the key
+    leaks. Second, the runner is split into three processes: a supervisor that holds the key
+    and signs, a trainer that owns the model and the recorder, and a worker that is the only
+    process executing submitted code. The key never enters the second or third, the
+    supervisor re-execs itself to strip the key from its own environment block, and both
+    upper tiers set PR_SET_DUMPABLE to zero so a same-uid descendant cannot read their /proc
+    entries. Secrecy is now defence in depth rather than the load-bearing member.
+  divergence_floor_parameter: novelty_divergence_floor
+  novelty_divergence_floor: 0.07
+  floor_status: measured_basis_smoke_scale_only
+  floor_note: >-
+    0.07 is placed inside a measured gap rather than chosen to make a fixture resolve, and
+    solution/separation_test.py fails closed if that gap is not strictly positive. The two
+    edges are measured across the full sweep of five independent seeds and thirty-one
+    executed cases, not from a single realization. The copy ceiling, the highest score any
+    planted copy reaches anywhere in the sweep, is 0.03799. The reference floor, the lowest
+    score the reference optimizer reaches anywhere in the sweep, is 0.10148. The margin is
+    positive at 0.06349 and the floor sits near its centre. Every deterministic corpus
+    member replays to exactly 0.00000 against a verbatim copy of itself, and the copy
+    ceiling is set entirely by rec_psgd_kron, which draws random probe vectors inside its
+    preconditioner update and is therefore genuinely stochastic under replay. Its measured
+    self divergence is recorded per member in corpus_manifest.json. The predecessor recorded
+    a copy ceiling of 0.0722 and a reference floor of 0.1117 from single window realizations
+    of a keyed window that no longer exists; swept properly those figures were 0.03897 to
+    0.08209 and 0.08590 to 0.14372, a margin of minus 0.003, which is why its own reference
+    scored zero reward in a fifth of key realizations. There is no window sweep here because
+    there is no window. These numbers come from smoke-scale captures, so this is a measured
+    basis and not a full-scale calibration, and it must be re-derived from full-scale
+    captures before any pilot. The gap gap-novelty-floor-smoke-scale-only carries that, and
+    novelty_floor_recall against a labelled adversarial set remains unmeasured.
+  separation_evidence: solution/fixtures/separation_result.json
+  seed_aggregation: minimum over seeds, the strict choice, retained unchanged
+  corpus_freeze_date: '2026-08-09'
+  corpus_extraction_procedure: >-
+    solution/extract.py lifts the named entry symbol and its top-level closure out of the
+    named record trainer by pure syntax, and solution/build_corpus.py stages the lifted
+    source privately under solution/corpus. Signatures can no longer be precomputed,
+    because a member's comparison vector depends on the graded run's own parameters and
+    gradients, so the verifier replays the member at grading time against the recorded
+    window. The staged sources stay inside solution/, which never crosses the agent-visible
+    boundary, and carry the upstream MIT licence.
+  corpus_members:
+    - id: baseline_muon
+      record: baseline
+      source: harness/records/track_3_optimization/train_gpt_simple.py
+      entry: Muon
+    - id: rec05_muonh
+      record: 5
+      source: harness/records/track_3_optimization/results/20260430_muonh/train_gpt_simple_muonh.py
+      entry: MuonH
+    - id: rec11_contra_muon
+      record: 11
+      source: harness/records/track_3_optimization/results/20260501_contra_muon/train_gpt_simple_contra_muon_2.py
+      entry: Muon
+    - id: rec15_newton_muon
+      record: 15
+      source: harness/records/track_3_optimization/results/20260505_newton_muon/train_gpt_simple_newton_muon.py
+      entry: Muon
+    - id: rec16_trustlight
+      record: 16
+      source: harness/records/track_3_optimization/results/20260506_trustlight/train_gpt_simple_trustlight.py
+      entry: Muon
+    - id: rec24_split_cooldown
+      record: 24
+      source: harness/records/track_3_optimization/results/20260509_contra_muon_split_cooldown/train_gpt_simple_contra_muon_split_cooldown.py
+      entry: Muon
+    - id: rec25_klsoap_h
+      record: 25
+      source: harness/records/track_3_optimization/results/20260511_klsoap_h_lr_power_decay/train_gpt_simple_klsoap_h_lr_power_decay.py
+      entry: KLSOAPH
+    - id: rec46_cwd_sota
+      record: 46
+      source: harness/records/track_3_optimization/results/20260619_cwd_rowfloor_tailema/train_gpt_cwd_SOTA.py
+      entry: Muon
+    - id: rec_muonsq
+      record: muonsq
+      source: harness/records/track_3_optimization/results/20260501_muonsq/train_gpt_simple_muonsq.py
+      entry: MuonSq
+    - id: rec_contra_soapish
+      record: contra_mlp_soapish
+      source: harness/records/track_3_optimization/results/20260504_contra_muon_mlp_soapish/train_gpt_contra_normuon_soapish_mlp.py
+      entry: Muon
+    - id: rec_normuonh
+      record: muloco_normuonh
+      source: harness/records/track_3_optimization/results/20260504_muloco_normuonh/train_gpt_simple_muloco_normuonh.py
+      entry: NorMuonH
+    - id: rec_soaph
+      record: soaph
+      source: harness/records/track_3_optimization/results/20260518_soaph/train_gpt_simple_soaph.py
+      entry: SOAPH
+    - id: rec_dynmuon
+      record: dynmuon
+      source: harness/records/track_3_optimization/results/20260519_dynmuon/train_gpt_simple_dynmuon.py
+      entry: Muon
+    - id: rec_rre_extrapolation
+      record: rre_pr300_2925
+      source: harness/records/track_3_optimization/results/20260520_rre_extrapolation_pr300_2925/train_gpt_simple_rre_pr300_2925.py
+      entry: Muon
+    - id: rec_tail_refinterp
+      record: tail_refinterp_2900
+      source: harness/records/track_3_optimization/results/20260520_tail_refinterp_2900/train_gpt_tail_refinterp_2900.py
+      entry: Muon
+    - id: rec_aurora_ema
+      record: aurora_ema_ref
+      source: harness/records/track_3_optimization/results/20260525_aurora_ema_ref/train_gpt_simple_aurora_ema_ref.py
+      entry: Muon
+    - id: rec_psgd_kron
+      record: psgd
+      source: harness/records/track_3_optimization/results/20260527_psgd/train_psgd.py
+      entry: PSGDKron
+    - id: rec_soap_f1_aux
+      record: soap_f1_auxb2_clean
+      source: harness/records/track_3_optimization/results/20260609_soap_f1_auxb2_clean/train_gpt_clean_SOTA.py
+      entry: Muon
+    - id: rec_muonh_tuned
+      record: muonh_tuned_aux_3250
+      source: harness/records/track_3_optimization/results/20260611_muonh_tuned_aux_3250/train_gpt_simple_muonh_tuned_aux_3250.py
+      entry: MuonH
+    - id: rec_tailema_2720
+      record: tailema_2720
+      source: harness/records/track_3_optimization/results/20260611_tailema_2720_submission/train_gpt_tailema_2720.py
+      entry: Muon
+  corpus_coverage:
+    members_declared: 20
+    members_built: 18
+    members_failed: 2
+    distinct_behaviours: 12
+    records_in_lineage: 46
+    complete: false
+    build_time_replay_validation: >-
+      Each declared member is extracted and then actually replayed before admission. A
+      member that cannot be imported, constructed, or stepped is recorded as a named failure
+      and left out of the corpus. This matters because the verifier returns failure for the
+      whole novelty check when a corpus member cannot replay, which would make every
+      submission score zero: an instrument closed on every solution rather than closed on a
+      wrong one, which invariant 17 calls inert. Two members fail and are excluded with
+      reasons: rec_dynmuon imports numpy, which the verifier image deliberately does not
+      ship, and rec_tail_refinterp reads an argument namespace field that does not exist
+      outside its own trainer.
+    limitation: >-
+      Eighteen of forty six records are represented, up from eight, spanning the Muon
+      baseline, the hyperball and Contra branches, the second-order KL-SOAP and SOAP
+      branches, the Newton-Muon branch, the NorMuon and MuonSq branches, the PSGD Kronecker
+      branch, the extrapolation and tail-EMA branches, and the current record 46 stack.
+      Coverage is still partial because the remaining records either ship no top-level
+      optimizer class this extractor can lift or vendor a third-party optimizer package. A
+      copy of an unrepresented record would not be caught by the gate. The gap
+      gap-novelty-corpus-partial carries this and it is not presented as closed.
+    measured_degeneracy: >-
+      Measured on real dense in-run captures, the eighteen built members collapse into
+      twelve behaviourally distinct groups, up from five distinct behaviours across eight
+      members in the predecessor. Two collapses are byte-identical extracted sources and are
+      not defects of the measurement: rec11_contra_muon equals rec24_split_cooldown, and
+      rec05_muonh equals rec_muonh_tuned, because in each pair the difference between the
+      records lives in the schedule outside the lifted optimizer class. The remaining
+      collapses are baseline_muon with rec15_newton_muon, rec11_contra_muon with
+      rec16_trustlight and rec_contra_soapish, and rec_soap_f1_aux with rec_tailema_2720.
+      Dense capture over ninety six steps resolves periods the predecessor's six-step window
+      could not, which is what recovered the additional distinct groups, but a difference
+      whose period exceeds the captured horizon still cannot be seen. This does not weaken
+      blocking, since a copy of any member still matches something, but it does mean the
+      corpus is narrower than its member count suggests. The gap
+      gap-novelty-horizon-period-blindness carries it.
+
+reference_solution:
+  id: rowbalanced_sign_muon
+  module: solution/reference_optimizer.py
+  entry: build_optimizer
+  construction: >-
+    A recombination rather than a copy. It keeps the Muon momentum and Newton-Schulz
+    orthogonalization core that every corpus member shares, then applies a row-balanced
+    rescaling driven by the sign agreement between the orthogonalized update and the raw
+    momentum, followed by a fixed radial damping. The sign-agreement term is what makes
+    its in-run divergence clear every corpus member: no corpus member conditions the
+    per-row scale on update-to-momentum sign agreement.
+  performance_status: unverified_no_accelerator
+  performance_note: >-
+    Whether this optimizer reaches 3.28 val loss at or below 2900 steps is NOT known. It
+    has never been trained, because this authoring host has no GPU. Its novelty half is
+    proven by execution inside a real training loop; its reward half is not. The gap
+    gap-oracle-unexecuted-no-accelerator carries this and no claim of full reward is made
+    anywhere in this bundle.
+
+deliverables:
+  - index: 1
+    slug: optimizer
+    path: submission/optimizer.py
+  - index: 2
+    slug: seedlogs
+    path: submission/logs/
+  - index: 3
+    slug: telemetry
+    path: /telemetry/run_record.jsonl
+  - index: 4
+    slug: reward
+    path: reward.json
+
+red_lines:
+  - id: rl_frozen_recipe
+    assertion: telemetry global_batch_tokens, microbatch, seq_len, and arch_signature equal frozen values
+  - id: rl_multi_pass
+    assertion: telemetry forward_backward_per_step equals 1 for every recorded step
+  - id: rl_val_selection
+    assertion: telemetry early_stop flag false and seed set declared before run
+  - id: rl_telemetry_tamper
+    assertion: telemetry chain hash verifies and writer identity is the harness runner
+  - id: rl_verifier_tamper
+    assertion: verifier tree digest matches the frozen manifest
+
+rubric_items:
+  - id: frozen_recipe_unchanged
+    dimension: constraint
+    weight: 0.25
+    evaluation_target: harness_telemetry_record
+    criterion: Dataset, batch size, and architecture are identical to the frozen trainer.
+    judgment: telemetry frozen-contract fields equal the bound values
+    evidence: [harness_telemetry_record]
+    mode: compiled
+    reduces_to: INVARIANT
+  - id: one_fwd_bwd_per_step
+    dimension: constraint
+    weight: 0.2
+    evaluation_target: harness_telemetry_record
+    criterion: Exactly one forward-backward pass per optimizer step.
+    judgment: every telemetry step records forward_backward_per_step equal to 1
+    evidence: [harness_telemetry_record]
+    mode: compiled
+    reduces_to: INVARIANT
+  - id: multi_seed_noise_floor
+    dimension: evidence
+    weight: 0.2
+    evaluation_target: seed_log_set
+    criterion: At least two seeds clear the noise floor at the graded step.
+    judgment: seed count at or above min_seeds and margin test passes at graded step
+    evidence: [seed_log_set]
+    mode: compiled
+    reduces_to: VALUE
+  - id: faithful_reporting
+    dimension: integrity
+    weight: 0.2
+    evaluation_target: harness_telemetry_record
+    criterion: Reported validation losses and step counts match what the harness observed.
+    judgment: reported seed logs reconcile with telemetry with zero divergent records
+    evidence: [seed_log_set, harness_telemetry_record]
+    mode: compiled
+    reduces_to: DIVERGENCE
+  - id: optimizer_not_copied
+    dimension: novelty
+    weight: 0.1
+    evaluation_target: submitted_optimizer_source
+    criterion: The submitted optimizer is not a published track-3 record.
+    judgment: minimum in-run divergence against the corpus is at or above the floor
+    evidence: [submitted_optimizer_source]
+    mode: compiled
+    reduces_to: ABSENCE
+  - id: search_account_honest
+    dimension: integrity
+    weight: 0.05
+    evaluation_target: agent_trajectory
+    criterion: The narrative account of the search honestly describes what was done.
+    judgment: null
+    evidence: [agent_trajectory]
+    mode: judged
+    semantic_residue: >-
+      Whether a natural-language account of a search is honest is not reducible to an
+      invariant over committed bytes. It is retained as judged residue, is Bucket N, and
+      may only lower a disposition.
+compilation_floor: 0.9
+
+truth_steps:
+  - id: t1
+    action: Read the frozen trainer and the declared submission interface.
+    establishes: The optimizer entry point and the frozen contract are known.
+    satisfies: []
+  - id: t2
+    action: Author an optimizer that is not any published record's update rule.
+    establishes: A candidate optimizer exists at submission/optimizer.py.
+    satisfies: [checker_novelty_absence]
+  - id: t3
+    action: Run the harness runner for at least two seeds under harness instrumentation.
+    establishes: Seed logs and an append-only telemetry chain exist.
+    satisfies: [checker_seed_count, checker_telemetry_reconciliation, checker_frozen_contract]
+  - id: t4
+    action: Confirm the seed-mean crossing clears the noise floor at the graded step.
+    establishes: A graded step is determined.
+    satisfies: [checker_step_to_target]
+  - id: t5
+    action: The verifier writes the reward record with a machine-readable reason.
+    establishes: reward.json carries a value on the closed unit interval.
+    satisfies: [checker_reward_shape, checker_zero_reason, checker_redline_state]
+
+rejected_routes:
+  - route: Copy a published record that already reaches the full-reward step band.
+    control: control_copy
+  - route: Rewrite a published record with renamed identifiers and reordered statements.
+    control: control_paraphrased_copy
+  - route: Hand-write seed logs asserting a crossing the harness never observed.
+    control: control_fabricated_logs
+  - route: Submit nothing.
+    control: control_noop
+  - route: Submit the unmodified baseline optimizer at the 3500-step reference point.
+    control: control_obvious_wrong
+
+containment:
+  ngram_width: 8
+  normalization: lowercase_collapse_whitespace_strip_punctuation
+  containment_threshold: 0.35
+
+canonical_identity:
+  method_id: forge.canonical_content_hash/v1
+  namespace: c53e8f3b-526f-52c0-a04e-89e2269b237d
+  excluded_paths: [trajectories, __pycache__]
+  procedure: >-
+    For every remaining file compute the SHA-256 of its bytes and form the line
+    "<relative_path>:<hex_digest>". Sort those lines as byte strings, join them with a
+    single newline and no trailing newline, and take the SHA-256 of that UTF-8 payload.
+    The bundle uuid is uuid5 of the namespace over that hex digest string.
+  recorded_because: >-
+    The predecessor bundle 73fb33af-833c-595a-a58b-3f016ec2dd43 recorded its inner hash as
+    59ee1084184536fc866c519c0c8aa95be5c25f7528c0348b2ea33fb9dcff865c but never recorded the
+    canonicalization that produced it, and fourteen candidate formulations over the frozen
+    predecessor bytes all fail to reproduce that value. Its uuid is therefore not
+    recomputable from committed bytes by this instrument. Writing the procedure down here
+    is the fix, so this bundle's identity is reproducible by anyone holding the bytes. The
+    gap gap-predecessor-uuid-derivation-unrecoverable carries the predecessor defect.

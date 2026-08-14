@@ -73,7 +73,7 @@ to {harbor,local,dry} → grader emits `reward.json` → ingest normalizes into
 ## Quickstart
 
 ```bash
-python -m pytest tests/                                # 38 tests, ~0.2s
+python -m pytest tests/
 
 # Task 1 with variant swap
 python runner/harness.py --task nanogpt-speedrun \
@@ -91,6 +91,14 @@ cat runs.jsonl
 ```
 
 For real GPU runs, see `COMMANDS.md`. Full stage-by-stage pipeline in `FLOW.md`.
+Verifier setup, rubric authoring, Codex judge operation, pytest enforcement, and
+artifact contracts are documented in `BIA_VERIFIER.md`.
+
+For autonomous refinement, use `--attempts N` (`--iterations` is a deprecated
+alias). Each attempt evaluates one LLM-authored candidate across `--seeds S`,
+which defaults to 2. `--llm-retries R`, default 3, applies only to planner LLM
+429/timeout retries; it does not retry training runs. The old ambiguous
+`--retries` flag is intentionally rejected.
 
 ## Adding a new task
 

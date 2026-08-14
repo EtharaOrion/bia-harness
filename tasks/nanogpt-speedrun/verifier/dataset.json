@@ -1,0 +1,111 @@
+{
+  "name": "nanogpt-track3-speedrun",
+  "submission_marker": "task.toml",
+  "log_glob": "*.log",
+  "telemetry_name": "run_record.jsonl",
+  "meta": {
+    "source_instruction": "tasks/nanogpt-speedrun/instruction.md",
+    "grader": "tasks/nanogpt-speedrun/tests/grader.py",
+    "target_val_loss": 3.28,
+    "baseline_steps": 3500,
+    "stretch_steps": 2500
+  },
+  "truth": {
+    "task": "nanogpt/track3-speedrun",
+    "source": "tasks/nanogpt-speedrun/instruction.md",
+    "steps": [
+      {
+        "id": "submit_variant",
+        "action": "Submit a training-script variant that edits only the Optimization and Init & Optim Hyperparams sections",
+        "establishes": "A concrete candidate variant is mounted at the task root; no changes to the Model section or distributed_data_generator",
+        "weight": 1,
+        "note": "The mount step is where a run can already fail silently: if nothing lands on disk under the task's submission root, everything below is a chase after a phantom."
+      },
+      {
+        "id": "train_runs_to_completion",
+        "action": "torchrun executes end-to-end and emits a val_loss trace",
+        "establishes": "The variant is training-ready: no CUDA errors, no NaN val_loss, at least one step:S/N val_loss:V line landed in the log",
+        "weight": 1,
+        "note": "The grader parses step lines from the log. A run without step lines has produced nothing to grade, no matter how long its wallclock burned."
+      },
+      {
+        "id": "hits_target",
+        "action": "At least one checkpoint reaches val_loss \u2264 3.28 and the run is a candidate for Track-3 credit",
+        "establishes": "The variant meets the primary success criterion; grader-emitted reward.json records hit_target=true with step_to_3_28 populated; the account of the run acknowledges Track-3's hard constraints and its statistical-significance rule",
+        "weight": 2,
+        "final_outcome": true,
+        "note": "Final outcome. Deterministic evidence proves the number was hit; judged evidence answers whether the win is legitimate under the Track-3 rules that a byte-level check cannot see."
+      }
+    ]
+  },
+  "concerns": [
+    {
+      "id": "det.variant_present",
+      "title": "A candidate variant is mounted for training",
+      "layer": "structure",
+      "owner": "deterministic",
+      "dimension": "process",
+      "truth_step": "submit_variant",
+      "always_measurable": true,
+      "rationale": "If no .py variant lives under the mounted task directory the run cannot have been graded on merit; anything downstream is scoring an empty room."
+    },
+    {
+      "id": "det.log_present",
+      "title": "Training produced at least one val_loss checkpoint line",
+      "layer": "structure",
+      "owner": "deterministic",
+      "dimension": "process",
+      "truth_step": "train_runs_to_completion",
+      "always_measurable": true,
+      "rationale": "The grader parses `step:S/N val_loss:V` lines; a missing log or a log with zero step lines means the training run never emitted evidence to grade against."
+    },
+    {
+      "id": "det.no_nan_or_cuda_error",
+      "title": "Training log is free of NaN val_loss and CUDA error markers",
+      "layer": "structure",
+      "owner": "deterministic",
+      "dimension": "process",
+      "truth_step": "train_runs_to_completion",
+      "always_measurable": true,
+      "rationale": "Instruction \u00a7Success criteria requires a clean run: no CUDA errors, no NaN. A grader that ignores NaN would happily record min_val_loss=nan; keeping the negative check explicit stops that failure mode from being scored as \u201cmerely mediocre\u201d."
+    },
+    {
+      "id": "det.hit_target",
+      "title": "Grader recorded hit_target=true with step_to_3_28 populated",
+      "layer": "structure",
+      "owner": "deterministic",
+      "dimension": "process",
+      "truth_step": "hits_target",
+      "always_measurable": true,
+      "rationale": "The grader's headline success signal: PASS iff at least one checkpoint recorded val_loss \u2264 3.28 and the earliest hit step is known. This is the anchor for the deterministic half of the final outcome."
+    },
+    {
+      "id": "det.reward_recorded",
+      "title": "A well-formed reward.json exists in the seed workdir",
+      "layer": "structure",
+      "owner": "deterministic",
+      "dimension": "process",
+      "truth_step": "hits_target",
+      "always_measurable": true,
+      "rationale": "A pipeline that produced no reward.json has emitted no scorable artifact; treating that as merely a low score would let a broken machine outrank a slow-but-honest one."
+    },
+    {
+      "id": "rub.constraint_compliance",
+      "title": "Variant respects the Track-3 hard constraints",
+      "layer": "judgment",
+      "owner": "rubric",
+      "dimension": "process",
+      "truth_step": "hits_target",
+      "rationale": "The Track-3 hard constraints (no Model / dataloader edits, one forward-backward pass per step, hyperparameters hardcoded, no unauthorised pip installs, third-party optimisers copied whole) invalidate an otherwise-successful run. Only a reader of the variant source can decide compliance; this criterion carries the veto for the judged half."
+    },
+    {
+      "id": "rub.stat_sig_communicated",
+      "title": "Run acknowledges the Track-3 statistical-significance rule",
+      "layer": "judgment",
+      "owner": "rubric",
+      "dimension": "process",
+      "truth_step": "hits_target",
+      "rationale": "Track-3 requires (3.28 \u2212 mean_val_loss)\u00b7\u221aN \u2265 0.004 for a claim to count. The grader emits stat_sig_at_n1 at n=1 only; someone must acknowledge whether the reported win survives that inequality when aggregated across seeds, or explicitly defer the claim."
+    }
+  ]
+}

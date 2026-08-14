@@ -81,10 +81,6 @@ def mount_task(task_dir: Path, out_dir: Path, *,
     return out_dir
 
 
-def mount(task_src: Path, variant_src: Path, out_dir: Path) -> Path:
-    return mount_task(task_src, out_dir, variant=variant_src)
-
-
 def main(argv):
     if len(argv) not in (3, 4):
         print("usage: mount_variant.py <task_dir> <out_dir> [<variant.py>]", file=sys.stderr)

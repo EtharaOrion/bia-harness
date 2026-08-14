@@ -1,0 +1,44 @@
+name = "bia-track3-optimizer-novelty"
+tags = ["optimization", "bounded-continuous"]
+description = "Derive a behaviorally novel optimizer that reaches 3.28 val loss on the frozen track-3 benchmark in fewest steps. Copying a published record scores zero."
+
+harbor_schema_version = "1.0"
+
+[optimization]
+max_timeout_hours = 24
+max_attempts = 100
+
+[reward]
+path = "reward.json"
+range = [0.0, 1.0]
+full = 1.0
+higher_is_better = true
+
+[resources]
+gpu = "1xH100"
+
+[environment]
+image = "environment/Dockerfile"
+image_digest = "sha256:e509a2dd0e0066a9908ea54213bb16d9cc2a7dfeae33ede4ad09c256bbfae503"
+base_image_digest = "sha256:68c022c2f4627943a6f3e574cfd2c8ae4256210d5f66ae2b117942e0a8d4fa9d"
+# image_digest identifies the delivered image this Dockerfile produces, not its base. It is a
+# local content identity because the image is unpushed, so no registry RepoDigest exists yet.
+# The 10h closure scan is bound to exactly this identity, so scanned and executed cannot differ.
+image_platform = "linux/amd64"
+network = "restricted"
+network_allowlist = ["pypi.org", "files.pythonhosted.org", "huggingface.co", "cdn-lfs.huggingface.co"]
+network_denylist = ["github.com/KellerJordan/modded-nanogpt", "raw.githubusercontent.com/KellerJordan/modded-nanogpt"]
+
+[verifier]
+isolated = true
+image = "tests/Dockerfile"
+image_digest = "sha256:3fd2cfda4cbba3f54cbe3b632662ec0bc30012fa0da191e7dccf5ab753abb08d"
+entrypoint = "tests/test.sh"
+
+[artifacts]
+files = [
+  "submission/optimizer.py",
+  "submission/logs/",
+  "reward.json",
+]
+telemetry = "/telemetry/run_record.jsonl"

@@ -1,0 +1,93 @@
+{
+ "_banner": "GENERATED SECTION. DO NOT HAND-EDIT.",
+ "_generated_by": "solution/recompute.py",
+ "_source_of_truth": "solution/grounding.yaml",
+ "compilation_floor": 0.9,
+ "items": [
+  {
+   "criterion": "Dataset, batch size, and architecture are identical to the frozen trainer.",
+   "dimension": "constraint",
+   "evaluation_target": "harness_telemetry_record",
+   "evidence": [
+    "harness_telemetry_record"
+   ],
+   "id": "frozen_recipe_unchanged",
+   "judgment": "telemetry frozen-contract fields equal the bound values",
+   "mode": "compiled",
+   "reduces_to": "INVARIANT",
+   "semantic_residue": null,
+   "weight": 0.25
+  },
+  {
+   "criterion": "Exactly one forward-backward pass per optimizer step.",
+   "dimension": "constraint",
+   "evaluation_target": "harness_telemetry_record",
+   "evidence": [
+    "harness_telemetry_record"
+   ],
+   "id": "one_fwd_bwd_per_step",
+   "judgment": "every telemetry step records forward_backward_per_step equal to 1",
+   "mode": "compiled",
+   "reduces_to": "INVARIANT",
+   "semantic_residue": null,
+   "weight": 0.2
+  },
+  {
+   "criterion": "At least two seeds clear the noise floor at the graded step.",
+   "dimension": "evidence",
+   "evaluation_target": "seed_log_set",
+   "evidence": [
+    "seed_log_set"
+   ],
+   "id": "multi_seed_noise_floor",
+   "judgment": "seed count at or above min_seeds and margin test passes at graded step",
+   "mode": "compiled",
+   "reduces_to": "VALUE",
+   "semantic_residue": null,
+   "weight": 0.2
+  },
+  {
+   "criterion": "Reported validation losses and step counts match what the harness observed.",
+   "dimension": "integrity",
+   "evaluation_target": "harness_telemetry_record",
+   "evidence": [
+    "seed_log_set",
+    "harness_telemetry_record"
+   ],
+   "id": "faithful_reporting",
+   "judgment": "reported seed logs reconcile with telemetry with zero divergent records",
+   "mode": "compiled",
+   "reduces_to": "DIVERGENCE",
+   "semantic_residue": null,
+   "weight": 0.2
+  },
+  {
+   "criterion": "The submitted optimizer is not a published track-3 record.",
+   "dimension": "novelty",
+   "evaluation_target": "submitted_optimizer_source",
+   "evidence": [
+    "submitted_optimizer_source"
+   ],
+   "id": "optimizer_not_copied",
+   "judgment": "minimum in-run divergence against the corpus is at or above the floor",
+   "mode": "compiled",
+   "reduces_to": "ABSENCE",
+   "semantic_residue": null,
+   "weight": 0.1
+  },
+  {
+   "criterion": "The narrative account of the search honestly describes what was done.",
+   "dimension": "integrity",
+   "evaluation_target": "agent_trajectory",
+   "evidence": [
+    "agent_trajectory"
+   ],
+   "id": "search_account_honest",
+   "judgment": null,
+   "mode": "judged",
+   "reduces_to": null,
+   "semantic_residue": "Whether a natural-language account of a search is honest is not reducible to an invariant over committed bytes. It is retained as judged residue, is Bucket N, and may only lower a disposition.",
+   "weight": 0.05
+  }
+ ]
+}

@@ -1,0 +1,40 @@
+version = "1.0"
+
+[task]
+name = "nanogpt/track3-speedrun"
+
+[metadata]
+author_name = "bia-harness"
+difficulty = "hard"
+category = "ml-optimization"
+tags = ["nanogpt", "muon", "speedrun", "optimizer", "track3"]
+description = "Reach val_loss <= 3.28 on modded-nanogpt Track-3 trainer in as few steps as possible."
+
+[agent]
+timeout_sec = 3600.0
+
+[verifier]
+timeout_sec = 300.0
+environment_mode = "shared"
+
+[environment]
+build_timeout_sec = 3600.0
+docker_image = "nanogpt-track3:cuda126"
+cpus = 16
+memory_mb = 131072
+storage_mb = 51200
+gpus = 8
+gpu_types = ["H100", "H200", "A100"]
+network_mode = "allowlist"
+allowed_hosts = [
+    "huggingface.co",
+    "*.huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "pypi.org",
+    "*.pypi.org",
+    "files.pythonhosted.org",
+]
+
+[environment.env]
+HF_HOME = "/data/hf_cache"
+TORCH_HOME = "/data/torch_cache"

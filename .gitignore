@@ -2,16 +2,23 @@
 fineweb10B/
 pylog124M/
 __pycache__/
-logs/
 .DS_Store
 .pytest_cache/
 
-# Per-invocation work dirs (harness runner creates timestamped dirs here)
-runs/*_seed*_*/
+# Virtualenvs
+bia-venv/
+
 
 # Ephemeral test scratch
 /tmp/asr*
-tasks/
+
+# --- Bridge -----------------
 proxy/
-runs/
-bia-venv/
+codex-proxy/
+
+# --- Credentials --------------------------------------------------------
+**/auth.json
+*.pem
+*.key
+.env
+.env.*

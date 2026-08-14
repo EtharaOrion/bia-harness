@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import difflib
 import json
 import re
+import shutil
 import signal
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,12 +17,14 @@ from harness import (
     resolve_ledger_path,
     resolve_policy_root,
     resolve_task,
+    resolve_task_uuid,
+    resolve_work_root,
 )
 from harness import run as harness_run
 from llm_client import LLMClient
-from plan_writer import update_goal, update_plan
+from plan_writer import freeze_run_plan, update_goal, update_plan
 from scaffold_policy import ensure_policy_scaffolded
-from summarize import load_ledger, summarize
+from summarize import load_ledger, summarize, write_attempt_summary
 
 
 MAX_TURNS_PER_ITER = 4
@@ -198,12 +203,95 @@ def build_user_message(iteration: int, prev_row: dict | None = None, stuck_signa
             "",
             "## Your tasks this iteration",
             "",
-            "1. Reflect on the result. If insightful, call `append_thread` and/or `update_plan_section`.",
+            "1. Reflect on the result. If insightful, call `append_thread` and/or `update_plan_section`. Keep entries small: THREAD <= 3 short lines (Hypothesis / Result / Insight), plan section 3 lesson <= 1 line.",
             "2. If a variant should be ruled down (>=2 seeds, hit_target=false), call `add_ruled_down`.",
             f"3. Propose the next candidate. Call `write_variant` with filename `iter{iteration}.py` (or a slug-stack name <= 4 underscore-segments).",
             "4. If you need to read a paper deeply or ablate an idea, call `spawn_subagent` first. Otherwise finalize with `write_variant`.",
         ]
     return "\n".join(lines)
+
+
+def build_user_message_from_run(iteration: int,
+                                prev_summary_md: str | None = None,
+                                prev_variant_py: str | None = None,
+                                stuck_signal: str | None = None) -> str:
+    lines = [f"# Iteration {iteration}"]
+    if stuck_signal:
+        lines += ["", f"**{stuck_signal}**"]
+    if prev_summary_md is None:
+        lines += [
+            "",
+            "This is the first attempt for this task in this run. Read the shared constitution and task instruction above.",
+            f"Propose your first candidate and write it via the `write_variant` tool. Filename: `iter{iteration}.py`.",
+        ]
+        return "\n".join(lines)
+    lines += [
+        "",
+        "## Previous attempt summary (from work/<uuid>/run<N-1>/summary.md)",
+        "",
+        prev_summary_md.rstrip(),
+        "",
+    ]
+    if prev_variant_py is not None:
+        lines += [
+            "## Previous attempt variant source (from work/<uuid>/run<N-1>/variant.py)",
+            "",
+            "```python",
+            prev_variant_py.rstrip(),
+            "```",
+            "",
+        ]
+    lines += [
+        "## Your tasks this iteration",
+        "",
+        "1. Reflect on the result. If insightful, call `append_thread` and/or `update_plan_section`. Keep entries small: THREAD <= 3 short lines (Hypothesis / Result / Insight), plan section 3 lesson <= 1 line.",
+        "2. If a variant should be ruled down (>=2 seeds, hit_target=false), call `add_ruled_down`.",
+        f"3. Propose the next candidate. Call `write_variant` with filename `iter{iteration}.py` (or a slug-stack name <= 4 underscore-segments).",
+        "4. If you need to read a paper deeply or ablate an idea, call `spawn_subagent` first. Otherwise finalize with `write_variant`.",
+    ]
+    return "\n".join(lines)
+
+
+def _append_trajectory(path: Path, entry: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, default=str, sort_keys=True) + "\n")
+
+
+def _read_prior_attempt(work_root: Path, run_num: int) -> tuple[str | None, str | None]:
+    if run_num <= 1:
+        return None, None
+    prev = work_root / f"run{(run_num - 1):02d}"
+    summary_md = prev / "summary.md"
+    variant_py = prev / "variant.py"
+    md_text = summary_md.read_text() if summary_md.is_file() else None
+    py_text = variant_py.read_text() if variant_py.is_file() else None
+    return md_text, py_text
+
+
+def _write_variant_diff(work_root: Path, run_num: int, current_variant: Path) -> Path:
+    """SPEC_AUDIT §6.2: emit work/<uuid>/run<N>/diff/variant.patch.
+
+    Unified diff against the prior attempt's variant.py (empty for attempt 1). No git
+    dependency: uses stdlib difflib so this works in the same environments the harness
+    already runs in.
+    """
+    diff_dir = work_root / f"run{run_num:02d}" / "diff"
+    diff_dir.mkdir(parents=True, exist_ok=True)
+    prev = work_root / f"run{(run_num - 1):02d}" / "variant.py"
+    prev_text = prev.read_text() if prev.is_file() else ""
+    curr_text = current_variant.read_text() if current_variant.is_file() else ""
+    prev_lines = prev_text.splitlines(keepends=True)
+    curr_lines = curr_text.splitlines(keepends=True)
+    patch = "".join(difflib.unified_diff(
+        prev_lines, curr_lines,
+        fromfile=f"run{(run_num - 1):02d}/variant.py",
+        tofile=f"run{run_num:02d}/variant.py",
+        n=3,
+    ))
+    out = diff_dir / "variant.patch"
+    out.write_text(patch)
+    return out
 
 
 def execute_spawn_subagent(tool_use: dict, client: LLMClient) -> str:
@@ -279,6 +367,34 @@ def _install_sigint_handler() -> dict:
     return halted
 
 
+def _write_loop_terminated(work_root: Path, reason: str, message: str, *,
+                            attempts_completed: int, last_run_num: int | None,
+                            extras: dict | None = None) -> Path:
+    payload = {
+        "terminated_at": datetime.now(timezone.utc).isoformat(),
+        "reason": reason,
+        "message": message,
+        "attempts_completed": attempts_completed,
+        "last_run_num": last_run_num,
+    }
+    if extras:
+        payload.update(extras)
+    path = work_root / "loop_terminated.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n")
+    return path
+
+
+def _snapshot_rfp(work_root: Path, rfp_path: Path | None) -> Path | None:
+    if rfp_path is None:
+        return None
+    if not rfp_path.is_file():
+        return None
+    dst = work_root / "rfp_snapshot.md"
+    if not dst.exists():
+        shutil.copy2(rfp_path, dst)
+    return dst
+
+
 def run_loop(
     task,
     iterations: int,
@@ -292,6 +408,20 @@ def run_loop(
     harness_root: Path = HARNESS_ROOT,
     llm_client: LLMClient | None = None,
     install_sigint: bool = True,
+    concurrent: int = 1,
+    jobs_dir: Path | None = None,
+    verifier_enabled: bool = True,
+    codex_bridge_url: str = "http://127.0.0.1:8788",
+    codex_bridge_key: str | None = None,
+    judge_model: str = "gpt5.6-sol",
+    precomputed_judgements: Path | None = None,
+    rfp_path: Path | None = None,
+    target_reward: float | None = None,
+    max_wall_clock_sec: float | None = None,
+    max_input_tokens: int | None = None,
+    k_consecutive_incomplete: int | None = None,
+    baseline_attempt_1: bool = False,
+    retry_count: int = 0,
 ) -> list[dict]:
     if iterations < 1:
         raise ValueError("iterations must be >= 1")
@@ -314,40 +444,170 @@ def run_loop(
 
     halted = _install_sigint_handler() if install_sigint else {"flag": False}
 
+    work_root = resolve_work_root(task_dir, harness_root=harness_root)
+    work_root.mkdir(parents=True, exist_ok=True)
+    _snapshot_rfp(work_root, rfp_path)
+
     all_rows: list[dict] = []
-    for _ in range(iterations):
+    attempts_completed = 0
+    last_run_num: int | None = None
+    cumulative_input_tokens = 0
+    consecutive_incomplete = 0
+    loop_start_wall = time.monotonic()
+    terminate_reason: str | None = None
+    terminate_message: str = ""
+    terminate_extras: dict = {}
+
+    for loop_idx in range(iterations):
         if halted["flag"]:
+            terminate_reason = "sigint"
+            terminate_message = "SIGINT received; loop halted between attempts."
             break
-        i = next_iteration_number(policy_dir)
-        summary = summarize(ledger)
-        try:
-            update_plan(policy_dir / "plan.md", summary)
-        except (FileNotFoundError, ValueError):
-            pass
-        try:
-            update_goal(policy_dir / "goal.md", summary)
-        except (FileNotFoundError, ValueError):
-            pass
+        if max_wall_clock_sec is not None and (time.monotonic() - loop_start_wall) >= max_wall_clock_sec:
+            terminate_reason = "wall_clock_exceeded"
+            terminate_message = (
+                f"cumulative wall-clock {time.monotonic() - loop_start_wall:.1f}s "
+                f">= --max-wall-clock-sec {max_wall_clock_sec}"
+            )
+            break
+        if max_input_tokens is not None and cumulative_input_tokens >= max_input_tokens:
+            terminate_reason = "token_budget_exceeded"
+            terminate_message = (
+                f"cumulative planner input_tokens {cumulative_input_tokens} "
+                f">= --max-input-tokens {max_input_tokens}"
+            )
+            break
+        run_num = loop_idx + 1
 
-        prev_rows = load_ledger(ledger)
-        prev_row = prev_rows[-1] if prev_rows else None
+        run_dir_policy = policy_dir / f"run{run_num:02d}"
+        if not (run_dir_policy / "plan.md").exists():
+            freeze_run_plan(policy_dir, run_num)
 
-        system_prompt = build_system_prompt(task_dir, policy_dir, harness_root=harness_root)
-        user_msg = build_user_message(i, prev_row, stuck_signal=_stuck_signal(summary))
+        run_dir_work = work_root / f"run{run_num:02d}"
+        run_dir_work.mkdir(parents=True, exist_ok=True)
+        (run_dir_work / "planner").mkdir(parents=True, exist_ok=True)
+        for name in ("plan.md", "goal.md"):
+            src = run_dir_policy / name
+            dst = run_dir_work / name
+            if src.is_file() and not dst.exists():
+                shutil.copy2(src, dst)
+
+        prev_summary_md, prev_variant_py = _read_prior_attempt(work_root, run_num)
+
+        if baseline_attempt_1 and run_num == 1:
+            baseline_started = datetime.now(timezone.utc).isoformat()
+            baseline_stub = run_dir_work / "variant.py"
+            baseline_stub.write_text(
+                "# ATTEMPT 1 BASELINE (SPEC_AUDIT R9)\n"
+                "# Planner intentionally skipped; the raw trainer executes as-is.\n"
+                "# Consumed by attempts 2+ as the reference point for improvement.\n"
+            )
+            _append_trajectory(run_dir_work / "planner" / "trajectory.jsonl", {
+                "turn": 0,
+                "role": "baseline",
+                "note": "R9: attempt 1 baseline; no planner turn issued.",
+                "timestamp_utc": baseline_started,
+            })
+            _write_variant_diff(work_root, run_num, baseline_stub)
+            rows = harness_run(
+                            task_dir, seeds_per_iter, backend, out_root,
+                            variant=None, ledger=ledger, llm_config=llm_config, agent=agent,
+                            concurrent=concurrent, attempt=run_num,
+                            attempt_dir=run_dir_work, jobs_dir=jobs_dir,
+                            verifier_enabled=verifier_enabled,
+                            codex_bridge_url=codex_bridge_url,
+                            codex_bridge_key=codex_bridge_key,
+                            judge_model=judge_model,
+                            precomputed_judgements=precomputed_judgements,
+                            retry_count=retry_count,
+                        )
+            baseline_finished = datetime.now(timezone.utc).isoformat()
+            (run_dir_work / "attempt_meta.json").write_text(json.dumps({
+                "attempt": run_num,
+                "baseline": True,
+                "started_at": baseline_started,
+                "finished_at": baseline_finished,
+                "model": None,
+                "proxy_base_url": llm_config.get("base_url"),
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "stop_reason": "baseline_no_planner",
+                "turns": 0,
+            }, indent=2, sort_keys=True, default=str) + "\n")
+            cumulative_rows = load_ledger(ledger)
+            write_attempt_summary(run_dir_work, task_id, run_num, rows, cumulative_rows)
+            summary_post = summarize(ledger)
+            try:
+                update_plan(policy_dir / "plan.md", summary_post)
+            except (FileNotFoundError, ValueError):
+                pass
+            try:
+                update_goal(policy_dir / "goal.md", summary_post)
+            except (FileNotFoundError, ValueError):
+                pass
+            freeze_run_plan(policy_dir, run_num + 1)
+            all_rows.extend(rows)
+            attempts_completed += 1
+            last_run_num = run_num
+            continue
+
+        summary_pre = summarize(ledger)
+        system_prompt = build_system_prompt(task_dir, run_dir_policy, harness_root=harness_root)
+        user_msg = build_user_message_from_run(
+            iteration=loop_idx,
+            prev_summary_md=prev_summary_md,
+            prev_variant_py=prev_variant_py,
+            stuck_signal=_stuck_signal(summary_pre),
+        )
+
+        trajectory_path = run_dir_work / "planner" / "trajectory.jsonl"
+        started_at = datetime.now(timezone.utc).isoformat()
+        _append_trajectory(trajectory_path, {
+            "turn": 0,
+            "role": "user",
+            "system_prompt": system_prompt,
+            "user_message": user_msg,
+            "timestamp_utc": started_at,
+        })
 
         conversation: list[dict] = [{"role": "user", "content": user_msg}]
         variant_path: Path | None = None
+        iter_input_tokens = 0
+        iter_output_tokens = 0
+        turn_count = 0
+        stop_reason = "max_turns"
+        model_name = llm_config.get("model", "unknown")
 
         for _turn in range(MAX_TURNS_PER_ITER):
+            turn_count += 1
             resp = client.messages(
                 system=system_prompt,
                 messages=conversation,
                 tools=TOOL_SCHEMAS,
             )
-            if not resp.tool_uses:
-                break
+            usage = (resp.raw or {}).get("usage") or {}
+            turn_in = int(usage.get("input_tokens") or 0)
+            turn_out = int(usage.get("output_tokens") or 0)
+            iter_input_tokens += turn_in
+            iter_output_tokens += turn_out
 
             raw_content = resp.raw.get("content") if isinstance(resp.raw, dict) else None
+            _append_trajectory(trajectory_path, {
+                "turn": turn_count,
+                "role": "assistant",
+                "assistant_content": raw_content,
+                "tool_uses": resp.tool_uses,
+                "input_tokens": turn_in,
+                "output_tokens": turn_out,
+                "model": model_name,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            })
+
+            if not resp.tool_uses:
+                stop_reason = "no_tool_use"
+                break
+
             if raw_content:
                 conversation.append({"role": "assistant", "content": raw_content})
 
@@ -358,6 +618,10 @@ def run_loop(
                     if tu["name"] == "spawn_subagent":
                         has_subagent = True
                         result_text = execute_spawn_subagent(tu, client)
+                        subagent_dir = run_dir_work / "planner" / "subagents"
+                        subagent_dir.mkdir(parents=True, exist_ok=True)
+                        kind = tu.get("input", {}).get("kind", "subagent")
+                        (subagent_dir / f"{turn_count}_{kind}.md").write_text(result_text)
                     else:
                         path = execute_tool_use(tu, policy_dir)
                         if tu["name"] == "write_variant":
@@ -374,12 +638,29 @@ def run_loop(
             if raw_content:
                 conversation.append({"role": "user", "content": tool_results})
 
+            _append_trajectory(trajectory_path, {
+                "turn": turn_count,
+                "role": "tool_results",
+                "tool_results": tool_results,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            })
+
             if not has_subagent:
+                stop_reason = "variant_written" if variant_path else "no_subagent_no_variant"
                 break
 
         if variant_path is None:
-            print(f"[orchestrator] iter {i}: no write_variant emitted; skipping training call.", file=sys.stderr)
+            print(f"[orchestrator] run {run_num}: no write_variant emitted; skipping dispatch/summary/plan.",
+                  file=sys.stderr)
             continue
+
+        variant_snapshot = run_dir_work / "variant.py"
+        shutil.copy2(variant_path, variant_snapshot)
+        variants_dir = run_dir_policy / "variants"
+        variants_dir.mkdir(parents=True, exist_ok=True)
+        if not (variants_dir / variant_path.name).exists():
+            shutil.copy2(variant_path, variants_dir / variant_path.name)
+        _write_variant_diff(work_root, run_num, variant_snapshot)
 
         rows = harness_run(
             task_dir,
@@ -390,7 +671,102 @@ def run_loop(
             ledger=ledger,
             llm_config=llm_config,
             agent=agent,
+            concurrent=concurrent,
+            attempt=run_num,
+            input_tokens=iter_input_tokens or None,
+            output_tokens=iter_output_tokens or None,
+            total_tokens=(iter_input_tokens + iter_output_tokens) or None,
+            attempt_dir=run_dir_work,
+            jobs_dir=jobs_dir,
+            verifier_enabled=verifier_enabled,
+            codex_bridge_url=codex_bridge_url,
+            codex_bridge_key=codex_bridge_key,
+            judge_model=judge_model,
+            precomputed_judgements=precomputed_judgements,
+            retry_count=retry_count,
         )
+        finished_at = datetime.now(timezone.utc).isoformat()
+
+        meta = {
+            "attempt": run_num,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "model": model_name,
+            "proxy_base_url": llm_config.get("base_url"),
+            "input_tokens": iter_input_tokens,
+            "output_tokens": iter_output_tokens,
+            "total_tokens": iter_input_tokens + iter_output_tokens,
+            "stop_reason": stop_reason,
+            "turns": turn_count,
+        }
+        (run_dir_work / "attempt_meta.json").write_text(
+            json.dumps(meta, indent=2, sort_keys=True, default=str) + "\n"
+        )
+
+        cumulative_rows = load_ledger(ledger)
+        write_attempt_summary(run_dir_work, task_id, run_num, rows, cumulative_rows)
+
+        summary_post = summarize(ledger)
+        try:
+            update_plan(policy_dir / "plan.md", summary_post)
+        except (FileNotFoundError, ValueError):
+            pass
+        try:
+            update_goal(policy_dir / "goal.md", summary_post)
+        except (FileNotFoundError, ValueError):
+            pass
+        freeze_run_plan(policy_dir, run_num + 1)
+
         all_rows.extend(rows)
+        attempts_completed += 1
+        last_run_num = run_num
+        cumulative_input_tokens += iter_input_tokens
+
+        seed_statuses = [r.get("status") for r in rows]
+        all_incomplete = bool(seed_statuses) and all(
+            s == "verification_incomplete" for s in seed_statuses
+        )
+        if all_incomplete:
+            consecutive_incomplete += 1
+        else:
+            consecutive_incomplete = 0
+
+        if target_reward is not None:
+            def _meets(row: dict) -> bool:
+                cr = row.get("consolidated_reward")
+                return cr is not None and cr >= target_reward
+            hit_seed = next((r for r in rows if _meets(r)), None)
+            if hit_seed is not None:
+                terminate_reason = "target_reached"
+                terminate_message = (
+                    f"seed_{hit_seed.get('seed')} of attempt {run_num} hit "
+                    f"consolidated_reward={hit_seed.get('consolidated_reward')} "
+                    f">= --target-reward {target_reward}"
+                )
+                terminate_extras = {
+                    "hit_seed": hit_seed.get("seed"),
+                    "hit_variant": hit_seed.get("variant"),
+                    "hit_consolidated_reward": hit_seed.get("consolidated_reward"),
+                }
+                break
+
+        if (k_consecutive_incomplete is not None
+                and consecutive_incomplete >= k_consecutive_incomplete):
+            terminate_reason = "k_consecutive_incomplete"
+            terminate_message = (
+                f"{consecutive_incomplete} consecutive attempts had every seed "
+                f"status=verification_incomplete (K={k_consecutive_incomplete})"
+            )
+            break
+
+    if terminate_reason is None and attempts_completed >= iterations:
+        pass
+    elif terminate_reason is not None:
+        _write_loop_terminated(
+            work_root, terminate_reason, terminate_message,
+            attempts_completed=attempts_completed,
+            last_run_num=last_run_num,
+            extras=terminate_extras or None,
+        )
 
     return all_rows

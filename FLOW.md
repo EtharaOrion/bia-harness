@@ -19,7 +19,7 @@ End-to-end lifecycle of one candidate variant across any registered task.
 │  4. Dispatch (runner/harness.py)                                        │
 │     python runner/harness.py                                            │
 │       --task <name|path> [--variant <path>]                             │
-│       --seeds N --backend {harbor,local,dry}                            │
+│       --attempts A --seeds S --backend {harbor,local,dry}               │
 │                                                                         │
 │     4a. resolve_task(name) -> tasks/<name>/ or verbatim path            │
 │     4b. read_task_id(task_dir) -> task.toml [task].name                 │
@@ -57,6 +57,35 @@ End-to-end lifecycle of one candidate variant across any registered task.
 │     picks next candidate.                                               │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+`--attempts` counts outer LLM-authored candidates; `--iterations` is a
+deprecated alias. `--seeds` defaults to 2 independent replicas per attempt.
+`--llm-retries` defaults to 3 and applies only to planner API 429/timeout
+failures. It never retries training, changes the seed count, or creates an
+additional attempt. The former `--retries` flag has been removed because it
+mixed unrelated retry domains.
+
+## BIA verifier flow
+
+`bia_verifier` is an explicit post-run verification pipeline rather than a
+hidden part of metric extraction:
+
+1. Load the dataset truth path and concern registry; reject a non-MECE spec.
+2. Discover submission, logs, telemetry, trajectory, and observed reward.
+3. Execute trusted deterministic predicates once.
+4. Validate that rubric IDs exactly match rubric-owned concerns.
+5. Judge each rubric item once with `gpt5.6-sol` through the authenticated local
+   Codex bridge, or load a complete precomputed judgement file.
+6. Produce one report/reward/outcomes/rubric artifact set from those same
+   results.
+7. Generate deterministic pytest assertions, execute them against
+   `outcomes.json`, and write `pytest.xml` plus `pytest_report.json`.
+
+Generated pytest failure makes the verifier CLI exit nonzero. Judge outages or
+unparseable replies are recorded as `not_measured`, not fabricated failures.
+The verifier is currently an explicit post-run command; the task runner does
+not automatically invoke it per seed yet. See `BIA_VERIFIER.md` for the full
+contract and the ordering required when that integration is added.
 
 ## Task registry
 

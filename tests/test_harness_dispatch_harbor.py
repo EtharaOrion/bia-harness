@@ -22,8 +22,12 @@ def test_build_harbor_cmd_minimal(tmp_path):
     assert "-k" in cmd and cmd[cmd.index("-k") + 1] == "1"
     assert "-n" in cmd and cmd[cmd.index("-n") + 1] == "1"
     assert "-m" not in cmd
-    assert "--ae" not in cmd
     assert "--allow-agent-host" not in cmd
+    ae_pairs = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "--ae"]
+    ae_dict = dict(pair.split("=", 1) for pair in ae_pairs)
+    assert ae_dict == {"BIA_HARNESS_SEED": "0", "SEED": "0", "PYTHONHASHSEED": "0"}
+    for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "LITELLM_TIMEOUT", "LITELLM_NUM_RETRIES"):
+        assert k not in ae_dict
 
 
 def test_build_harbor_cmd_with_llm_config(tmp_path):
@@ -50,6 +54,8 @@ def test_build_harbor_cmd_with_llm_config(tmp_path):
     assert ae_dict["ANTHROPIC_API_KEY"] == "stub-key-24-characters!"
     assert ae_dict["LITELLM_TIMEOUT"] == "600"
     assert ae_dict["LITELLM_NUM_RETRIES"] == "2"
+    assert ae_dict["SEED"] == "3"
+    assert ae_dict["BIA_HARNESS_SEED"] == "3"
     assert "--allow-agent-host" in cmd
 
 

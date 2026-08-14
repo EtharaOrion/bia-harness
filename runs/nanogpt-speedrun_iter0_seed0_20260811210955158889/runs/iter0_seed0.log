@@ -1,0 +1,14 @@
+logs/iter0_seed0.txt
+Running task task with dry backend (synthetic).
+step:250/3000 val_loss:3.9375 train_time:87.500s step_avg:350.00ms
+step:500/3000 val_loss:3.875 train_time:175.000s step_avg:350.00ms
+step:750/3000 val_loss:3.8125 train_time:262.500s step_avg:350.00ms
+step:1000/3000 val_loss:3.75 train_time:350.000s step_avg:350.00ms
+step:1250/3000 val_loss:3.6875 train_time:437.500s step_avg:350.00ms
+step:1500/3000 val_loss:3.625 train_time:525.000s step_avg:350.00ms
+step:1750/3000 val_loss:3.5625 train_time:612.500s step_avg:350.00ms
+step:2000/3000 val_loss:3.5 train_time:700.000s step_avg:350.00ms
+step:2250/3000 val_loss:3.4375 train_time:787.500s step_avg:350.00ms
+step:2500/3000 val_loss:3.375 train_time:875.000s step_avg:350.00ms
+step:2750/3000 val_loss:3.3125 train_time:962.500s step_avg:350.00ms
+step:3000/3000 val_loss:3.25 train_time:1050.000s step_avg:350.00ms

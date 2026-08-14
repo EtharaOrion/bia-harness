@@ -1,0 +1,170 @@
+{
+ "failures": {
+  "rec_dynmuon": "ModuleNotFoundError: No module named 'numpy'",
+  "rec_tail_refinterp": "AttributeError: 'Namespace' object has no attribute 'seed'"
+ },
+ "members": {
+  "baseline_muon": {
+   "entry": "Muon",
+   "extracted_sha256": "a9f3628b196aec10067fc3c43301b2bd06d4d1c0917168063d3d1bb047c62026",
+   "module": "baseline_muon.py",
+   "record": "baseline",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "train_gpt_simple.py"
+  },
+  "rec05_muonh": {
+   "entry": "MuonH",
+   "extracted_sha256": "a8825df88453f2670ecb9c2f53c135e1fe55869f6b5b530746ca8e58499a1321",
+   "module": "rec05_muonh.py",
+   "record": 5,
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260430_muonh/train_gpt_simple_muonh.py"
+  },
+  "rec11_contra_muon": {
+   "entry": "Muon",
+   "extracted_sha256": "6d34275165b79ae7342862dd631a7414a4a891bedea6ba6c66090d2be3dc973c",
+   "module": "rec11_contra_muon.py",
+   "record": 11,
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260501_contra_muon/train_gpt_simple_contra_muon_2.py"
+  },
+  "rec15_newton_muon": {
+   "entry": "Muon",
+   "extracted_sha256": "bacb776cae823c58992d35abe84fbde8c13cc7b4d8d17d0d56c498999b781d48",
+   "module": "rec15_newton_muon.py",
+   "record": 15,
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260505_newton_muon/train_gpt_simple_newton_muon.py"
+  },
+  "rec16_trustlight": {
+   "entry": "Muon",
+   "extracted_sha256": "d136c559dc77fc72068aeedb98fdac24a1ceb2b36620b95b467c577731f2c635",
+   "module": "rec16_trustlight.py",
+   "record": 16,
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260506_trustlight/train_gpt_simple_trustlight.py"
+  },
+  "rec24_split_cooldown": {
+   "entry": "Muon",
+   "extracted_sha256": "6d34275165b79ae7342862dd631a7414a4a891bedea6ba6c66090d2be3dc973c",
+   "module": "rec24_split_cooldown.py",
+   "record": 24,
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260509_contra_muon_split_cooldown/train_gpt_simple_contra_muon_split_cooldown.py"
+  },
+  "rec25_klsoap_h": {
+   "entry": "KLSOAPH",
+   "extracted_sha256": "14d98a04cc9dc75d1d9bd9cca88548e57e5608ac99c9b7b44723ab389323ba68",
+   "module": "rec25_klsoap_h.py",
+   "record": 25,
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260511_klsoap_h_lr_power_decay/train_gpt_simple_klsoap_h_lr_power_decay.py"
+  },
+  "rec46_cwd_sota": {
+   "entry": "Muon",
+   "extracted_sha256": "245bda24dd9c42ea3f658dd84634cff64a36aa900149e61449ad9e80a390f9fc",
+   "module": "rec46_cwd_sota.py",
+   "record": 46,
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260619_cwd_rowfloor_tailema/train_gpt_cwd_SOTA.py"
+  },
+  "rec_aurora_ema": {
+   "entry": "Muon",
+   "extracted_sha256": "e44ccb59aff607f59f051f64d20c7833480a799a6701b900d24e3c9d38029e59",
+   "module": "rec_aurora_ema.py",
+   "record": "aurora_ema_ref",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260525_aurora_ema_ref/train_gpt_simple_aurora_ema_ref.py"
+  },
+  "rec_contra_soapish": {
+   "entry": "Muon",
+   "extracted_sha256": "40aa39863f207ec5c0c37c8ffaa5547266fa7067e6959f156a444f6cb0f86a9e",
+   "module": "rec_contra_soapish.py",
+   "record": "contra_mlp_soapish",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260504_contra_muon_mlp_soapish/train_gpt_contra_normuon_soapish_mlp.py"
+  },
+  "rec_muonh_tuned": {
+   "entry": "MuonH",
+   "extracted_sha256": "a8825df88453f2670ecb9c2f53c135e1fe55869f6b5b530746ca8e58499a1321",
+   "module": "rec_muonh_tuned.py",
+   "record": "muonh_tuned_aux_3250",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260611_muonh_tuned_aux_3250/train_gpt_simple_muonh_tuned_aux_3250.py"
+  },
+  "rec_muonsq": {
+   "entry": "MuonSq",
+   "extracted_sha256": "d839f59aeac002e3f2f5a928c101135b7d4a275ee59d09f7b3f4845064b6d3f9",
+   "module": "rec_muonsq.py",
+   "record": "muonsq",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260501_muonsq/train_gpt_simple_muonsq.py"
+  },
+  "rec_normuonh": {
+   "entry": "NorMuonH",
+   "extracted_sha256": "b1f9f823b7bb95d0cb0dbbf5a98556b3869918c57f3059ee749ee24154d102b9",
+   "module": "rec_normuonh.py",
+   "record": "muloco_normuonh",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260504_muloco_normuonh/train_gpt_simple_muloco_normuonh.py"
+  },
+  "rec_psgd_kron": {
+   "entry": "PSGDKron",
+   "extracted_sha256": "e1c51081ed6efce46092104d5e9b66981aa9f3150e22301c5375615c247464ad",
+   "module": "rec_psgd_kron.py",
+   "record": "psgd",
+   "replay_deterministic": false,
+   "replay_self_divergence_probe": 0.074164,
+   "source_rel": "results/20260527_psgd/train_psgd.py"
+  },
+  "rec_rre_extrapolation": {
+   "entry": "Muon",
+   "extracted_sha256": "096ac5e9930ea952020a821145f0c7db869cddc4823496347e5da8239ddbc89d",
+   "module": "rec_rre_extrapolation.py",
+   "record": "rre_pr300_2925",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260520_rre_extrapolation_pr300_2925/train_gpt_simple_rre_pr300_2925.py"
+  },
+  "rec_soap_f1_aux": {
+   "entry": "Muon",
+   "extracted_sha256": "1a9b30ea452fd9669dde25c39307915fcdbc7f888533e1d8db9114734a607d63",
+   "module": "rec_soap_f1_aux.py",
+   "record": "soap_f1_auxb2_clean",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260609_soap_f1_auxb2_clean/train_gpt_clean_SOTA.py"
+  },
+  "rec_soaph": {
+   "entry": "SOAPH",
+   "extracted_sha256": "ea1eaf5faad64d301eca462887a5769f34b6f837613817a6c6db5067dbcaa11c",
+   "module": "rec_soaph.py",
+   "record": "soaph",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260518_soaph/train_gpt_simple_soaph.py"
+  },
+  "rec_tailema_2720": {
+   "entry": "Muon",
+   "extracted_sha256": "defc85f921858ba14e034f6ca0536c550e4a25229dade19a1a3a07a29a4b5d88",
+   "module": "rec_tailema_2720.py",
+   "record": "tailema_2720",
+   "replay_deterministic": true,
+   "replay_self_divergence_probe": 0.0,
+   "source_rel": "results/20260611_tailema_2720_submission/train_gpt_tailema_2720.py"
+  }
+ }
+}

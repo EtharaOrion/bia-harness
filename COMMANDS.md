@@ -30,16 +30,34 @@ harbor --version              # verify CLI in PATH
 ## Verify the harness
 
 ```bash
-python -m pytest tests/ -v    # 38 tests, ~0.2s
+python -m pytest tests/ -v
 ```
 
-Expected breakdown:
-- 7 grader (task-specific reward computation)
-- 4 harness_dry (multi-task orchestrator end-to-end)
-- 4 ingest_result (canonical row schema)
-- 6 mount_toml parametrized (shared refs + variant block validity)
-- 8 mount_variant (mount + swap + reject-invalid)
-- 9 task_toml parametrized (per-task schema + required files + multi-task assertion)
+The suite covers task grading, dry-run orchestration, ledger ingestion, mount
+validation, task schemas, LLM client behavior, and RFP/CLI alignment. Do not
+copy a test count into automation; the count changes as coverage grows.
+
+### Verify a run with deterministic pytest and the GPT judge
+
+```bash
+export KAIJU_CODEX_BRIDGE_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export PYTHONPATH="$PWD/codex-proxy"
+python -m agent.openai_codex --host 127.0.0.1 --port 8788
+
+# In a second shell, using the same secret:
+export OPENAI_BASE_URL=http://127.0.0.1:8788
+export OPENAI_API_KEY="$KAIJU_CODEX_BRIDGE_SECRET"
+python -m bia_verifier.cli grade \
+  --dataset path/to/dataset.json \
+  --run path/to/run \
+  --predicates path/to/predicates.py \
+  --rubric path/to/rubric.json \
+  --judge codex --judge-model gpt5.6-sol \
+  --out output/run-id
+```
+
+See `BIA_VERIFIER.md` for schemas, trust boundaries, offline judgement replay,
+artifact definitions, and operational cautions.
 
 ## Run tasks
 
@@ -110,9 +128,9 @@ python runner/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted_task
 harbor run -p /tmp/mounted_task -a oracle -n 1 --env docker
 ```
 
-## Autonomous refinement loop (multi-iteration)
+## Autonomous refinement loop (multiple attempts)
 
-The runner supports LLM-driven refinement. Passing `--iterations N > 1` delegates
+The runner supports LLM-driven refinement. Passing `--attempts N > 1` delegates
 to `runner/orchestrator.run_loop`, which builds an LLM system prompt from the
 shared `policy/AGENTS.md` + the task's own `instruction.md` + the auto-refreshed
 `policy/<slug>/plan.md` + `goal.md`, calls the LLM with tool_use tools
@@ -130,9 +148,17 @@ python runner/harness.py \
   --backend harbor \
   --llm-config proxy/claude-code-oauth.json \
   --agent claude_code \
-  --iterations 20 --seeds 2
+  --attempts 20 --seeds 2 --llm-retries 3
 ```
 
+- `--attempts` is the canonical RFP term. `--iterations` remains a deprecated
+  alias for compatibility.
+- `--seeds` defaults to 2 and controls independent RNG replicas per attempt.
+- `--llm-retries` defaults to 3 and retries only planner LLM transport failures
+  such as timeouts and HTTP 429 responses. It does not repeat training seeds,
+  retry failed Harbor jobs, or add attempts.
+- The retired `--retries` flag is rejected. Use `--llm-retries` for planner API
+  retries and `--seeds` for statistical replication.
 - SIGINT (Ctrl-C) halts cleanly after the current iteration finishes.
 - Restart resumes from `max(iter*.py) + 1` — variant files under
   `scratchpad/variants/` are the recovery source of truth.
@@ -229,6 +255,8 @@ docker build -t nanogpt-track3:cuda126 /tmp/mounted/environment/
 | `StopIteration` in `_load_data_shard` | CWD not the environment/ dir | Runner sets `cwd=env_dir`; if bypassing runner, `cd <mounted>/environment` first |
 | `NaN` val_loss with `torch==2.10` on A100 | Known upstream bug | Use `torch==2.11` (pinned) |
 | Empty ledger despite runs | Wrong `--ledger` path | Defaults to `runs.jsonl` at repo root; check `pwd` |
+| `unrecognized arguments: --retries` | Retired ambiguous flag | Use `--llm-retries N`; training replicas are `--seeds N` |
+| `--attempts > 1 requires --llm-config` | Autonomous mode needs an LLM endpoint | Pass a proxy JSON via `--llm-config` or run a single manual attempt |
 | `harbor run` produces no `result.json` | Harbor CLI not in PATH or version mismatch | `harbor --version`; pin v0.16.1+ |
 | Pytest fails on new task | Missing required file | Verify all 7 files per §Adding a new task; run `pytest tests/test_task_toml.py -v` |
 

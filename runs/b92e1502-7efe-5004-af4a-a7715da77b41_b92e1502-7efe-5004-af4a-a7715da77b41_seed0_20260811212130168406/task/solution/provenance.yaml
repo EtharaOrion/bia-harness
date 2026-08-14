@@ -1,0 +1,47 @@
+ancestry_attestation_digest: null
+ancestry_attestation_signer: null
+archetype: AR5
+atom_results:
+  empty_submission_validation: executed
+  exclusion_matching: screening-unverified
+  freeze_holdout: screening-unverified
+  near_duplicate_screening: screening-unverified
+  sanitization: executed
+attestation_status: attestation-unavailable
+banner: GENERATED SECTION. DO NOT HAND-EDIT.
+base_commit_sha: null
+canonical_repository_identity: KellerJordan/modded-nanogpt
+event_attestation_digest: null
+event_attestation_signer: null
+fork_ancestry_snapshot_digest: null
+instrument_versions:
+  extractor: extract/v1
+  novelty: inrun/v2
+  recompute: recompute/v1
+novelty_corpus:
+  capture_scope: all_2d_parameters_every_step
+  complete: false
+  distinct_behaviours: 12
+  divergence_floor: 0.07
+  floor_status: measured_basis_smoke_scale_only
+  freeze_date: '2026-08-09'
+  members_built: 18
+  members_failed: 2
+  records_in_lineage: 46
+origin: derived
+provenance_date: null
+reader_note: Every value here is a producer claim, never evidence. A reader recomputes
+  each one from committed bytes and named roots. Assertions here may be contradicted
+  and must never be relied upon.
+schema: forge.provenance/v1
+screening_root_status: unresolvable-all-null
+screening_roots:
+  exclusion_list: null
+  freeze_date_table: null
+  near_duplicate_index: null
+  source_attestation: null
+source_kind: public_repository
+task_family: track3-optimizer-search
+task_generating_event_timestamp: null
+upstream_identity: KellerJordan/modded-nanogpt records/track_3_optimization
+upstream_license: MIT

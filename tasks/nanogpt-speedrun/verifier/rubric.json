@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "concern_id": "rub.constraint_compliance",
+      "criterion": "Does the submitted variant respect every Track-3 hard constraint listed in the task instruction? Specifically: (a) the Model section and distributed_data_generator function are unchanged; (b) modifications live only in the Optimization and Init & Optim Hyperparams sections; (c) exactly one forward/backward pass per step (no inner multi-step loops); (d) any third-party optimizer library is copied in whole (no new `pip install` calls added); (e) hyperparameters are hardcoded in the script (no CLI arguments).",
+      "guidance": "Read the variant source under the mounted submission directory and compare against the constraints text quoted in the task instruction. Verdict PASS if every constraint is respected; FAIL if any is clearly violated; INCONCLUSIVE only if the source is unavailable or the constraint status is genuinely ambiguous. Do not infer compliance from headline numbers alone; a fast run that violates a constraint is disqualified, and a slow run that respects them is not.",
+      "anchorable": false,
+      "weight": 1.5
+    },
+    {
+      "concern_id": "rub.stat_sig_communicated",
+      "criterion": "Does the run's account acknowledge the Track-3 statistical-significance rule ((3.28 \u2212 mean_val_loss)\u00b7\u221aN \u2265 0.004) \u2013 either by reporting the stat_sig_at_n1 margin alongside the headline reward, or by explicitly noting that a single-seed result is insufficient to claim a Track-3 win and must be aggregated across seeds?",
+      "guidance": "Consult the trajectory prose, any run_record entries, and the reward.json emitted by the grader. Verdict PASS if the account surfaces the statsig margin or explicitly defers the claim to multi-seed aggregation; FAIL if the run declares victory without mentioning statistical significance at all; INCONCLUSIVE if no narrative artifact is available to read. Numerical near-misses are not failures on their own \u2013 the criterion is about acknowledgement, not about whether the inequality holds.",
+      "anchorable": true,
+      "weight": 1.0
+    }
+  ]
+}
