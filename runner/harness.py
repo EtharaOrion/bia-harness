@@ -366,8 +366,10 @@ def build_harbor_cmd(mounted_task: Path, seed: int, jobs_dir: Path, *,
         "--ae", f"PYTHONHASHSEED={seed}",
     ]
     if llm_config:
+        from llm_client import _strip_provider_prefix
+
         container_url = _container_base_url(llm_config["base_url"])
-        cmd += ["-m", llm_config["model"]]
+        cmd += ["-m", _strip_provider_prefix(llm_config["model"])]
         cmd += ["--ae", f"ANTHROPIC_BASE_URL={container_url}"]
         cmd += ["--ae", f"ANTHROPIC_API_KEY={llm_config['api_key']}"]
         if "timeout" in llm_config:
@@ -400,7 +402,7 @@ def _pick_harbor_log(trial_dir: Path, agent: str) -> Path | None:
 
 def dispatch_harbor(mounted_task: Path, seed: int, work_dir: Path,
                     run_name: str, *, llm_config: dict | None = None,
-                    agent: str = "bash", attempts: int = 1,
+                    agent: str = "claude-code", attempts: int = 1,
                     concurrent: int = 1,
                     jobs_dir: Path | None = None) -> tuple[Path | None, dict]:
     if jobs_dir is None:
@@ -411,9 +413,9 @@ def dispatch_harbor(mounted_task: Path, seed: int, work_dir: Path,
 
     if llm_config:
         preflight_bridge(llm_config["base_url"])
-        if agent == "bash":
-            print("WARN: --llm-config set but --agent=bash (bash agent will not call the LLM). "
-                  "Use --agent claude_code (or another litellm-based Harbor agent).",
+        if agent == "nop":
+            print("WARN: --llm-config set but --agent=nop (the no-op agent never calls the LLM). "
+                  "Use --agent claude-code (or another litellm-based Harbor agent).",
                   file=sys.stderr)
 
     cmd = build_harbor_cmd(mounted_task, seed, jobs_dir,
@@ -421,11 +423,14 @@ def dispatch_harbor(mounted_task: Path, seed: int, work_dir: Path,
                            attempts=attempts, concurrent=concurrent)
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
-    result_files = list(jobs_dir.rglob("result.json"))
+    result_files = sorted(jobs_dir.rglob("result.json"))
     if not result_files:
         raise RuntimeError(f"harbor run produced no result.json; stderr={proc.stderr[:500]}")
 
-    trial_dir = result_files[-1].parent
+    # The job-level result.json sits beside the per-trial ones and carries no reward.
+    trial_results = [p for p in result_files if _is_trial_result(p)]
+    chosen = trial_results[-1] if trial_results else result_files[-1]
+    trial_dir = chosen.parent
     log_path = _pick_harbor_log(trial_dir, agent)
 
     harbor_trial_dst = work_dir / "harbor_trial"
@@ -444,7 +449,7 @@ def dispatch_harbor(mounted_task: Path, seed: int, work_dir: Path,
     return log_path, {
         "status": "success" if proc.returncode == 0 else "error",
         "returncode": proc.returncode,
-        "harbor_result": json.loads(result_files[-1].read_text()),
+        "harbor_result": json.loads(chosen.read_text()),
         "harbor_trial_dir": str(harbor_trial_dst),
     }
 
@@ -461,14 +466,29 @@ DISPATCHERS = {"dry": dispatch_dry, "local": dispatch_local, "harbor": dispatch_
 
 
 def _reward_from_harbor(harbor_result: dict) -> dict:
-    reward = harbor_result.get("reward", 0.0)
-    metrics = harbor_result.get("metrics") or {}
+    """Adapt a Harbor trial result to our grader shape.
+
+    Harbor keeps the parsed verifier output under verifier_result.rewards; there is
+    no top-level reward key, so reading one silently yields 0.0 for every trial.
+    """
+    rewards = (harbor_result.get("verifier_result") or {}).get("rewards") or {}
+    if not rewards:
+        rewards = harbor_result.get("metrics") or {}
+    reward = rewards.get("reward", harbor_result.get("reward", 0.0))
+    reward = float(reward) if isinstance(reward, (int, float)) else 0.0
     return {
         "reward": reward,
         "hit_target": reward > 0,
-        **{k: v for k, v in metrics.items()},
+        **{k: v for k, v in rewards.items() if k != "reward"},
         "_harbor": harbor_result,
     }
+
+
+def _is_trial_result(path: Path) -> bool:
+    try:
+        return "trial_name" in json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
 
 
 DEFAULT_CODEX_BRIDGE_URL = "http://127.0.0.1:8788"
@@ -477,7 +497,7 @@ DEFAULT_JUDGE_MODEL = "gpt5.6-sol"
 
 def run(task, seeds: int, backend: str, out_root: Path, *,
         variant: Path | None = None, ledger: Path | None = None,
-        llm_config: dict | None = None, agent: str = "bash",
+        llm_config: dict | None = None, agent: str = "claude-code",
         concurrent: int = 1,
         attempt: int | None = None,
         input_tokens: int | None = None,
@@ -670,8 +690,9 @@ def parse_args(argv):
                    help="Per-task ledger path. Default: runs/<task-slug>/runs.jsonl (auto-resolved from task_id).")
     p.add_argument("--llm-config", type=Path, default=None,
                    help="Path to proxy JSON (model, base_url, api_key, timeout, num_retries). Only used with --backend harbor.")
-    p.add_argument("--agent", default="bash",
-                   help="Harbor agent name (bash/claude_code/codex/aider/opencode/...). Default: bash (deterministic).")
+    p.add_argument("--agent", default="claude-code",
+                   help="Harbor agent name (claude-code/codex/aider/opencode/nop/...). "
+                        "Default: claude-code. Use nop for a no-agent verifier-only smoke.")
     p.add_argument("--attempts", "--iterations", dest="attempts", type=int, default=1,
                    help="Number of LLM-authored candidates (RFP 'attempts', PI 'variants'). "
                         ">1 requires --llm-config and delegates to orchestrator.run_loop. "

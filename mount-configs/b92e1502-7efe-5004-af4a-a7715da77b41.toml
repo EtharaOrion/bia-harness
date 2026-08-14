@@ -6,5 +6,5 @@ version = "1.0"
 # are added inside the task tree, so we cannot drop mount.toml in-tree.
 
 [variant]
-dst = "submission/optimizer.py"
+dst = "environment/submission/optimizer.py"
 required = false

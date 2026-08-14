@@ -10,6 +10,9 @@ from typing import Any
 import httpx
 
 
+MAX_RETRY_SLEEP_SEC = 60.0
+
+
 class LLMError(RuntimeError):
     pass
 
@@ -55,15 +58,17 @@ class LLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 4096,
-        temperature: float = 0.7,
+        temperature: float | None = None,
     ) -> LLMResponse:
         body: dict[str, Any] = {
             "model": self.model,
             "system": system,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": temperature,
         }
+        # Newer models reject `temperature` outright, so it is only sent when asked for.
+        if temperature is not None:
+            body["temperature"] = temperature
         if tools:
             body["tools"] = tools
 
@@ -87,12 +92,16 @@ class LLMClient:
                 continue
 
             if resp.status_code in (429, 529):
+                server_wait = _server_retry_delay(resp)
                 if attempt >= self.num_retries:
+                    hint = f"; server asked for {server_wait:.0f}s" if server_wait else ""
                     raise LLMRateLimitError(
-                        f"rate-limited (HTTP {resp.status_code}) after {self.num_retries + 1} attempts"
+                        f"rate-limited (HTTP {resp.status_code}) after "
+                        f"{self.num_retries + 1} attempts{hint}"
                     )
-                time.sleep(delay + random.uniform(0, 0.5))
-                delay = min(delay * 2, 30.0)
+                wait = server_wait if server_wait is not None else delay
+                time.sleep(min(wait, MAX_RETRY_SLEEP_SEC) + random.uniform(0, 0.5))
+                delay = min(delay * 2, MAX_RETRY_SLEEP_SEC)
                 continue
 
             if resp.status_code >= 400:
@@ -101,6 +110,26 @@ class LLMClient:
             return _parse_response(resp.json())
 
         raise LLMError("unreachable retry loop")
+
+
+def _server_retry_delay(resp) -> float | None:
+    """Seconds the server asked us to wait, from the Retry-After header or bridge body."""
+    raw = resp.headers.get("retry-after")
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    try:
+        payload = resp.json()
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    seconds = (payload.get("aurora_bridge") or {}).get("retry_after_seconds")
+    if isinstance(seconds, (int, float)):
+        return max(0.0, float(seconds))
+    return None
 
 
 def _strip_provider_prefix(model: str) -> str:

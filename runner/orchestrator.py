@@ -401,7 +401,7 @@ def run_loop(
     backend: str,
     llm_config: dict,
     *,
-    agent: str = "claude_code",
+    agent: str = "claude-code",
     seeds_per_iter: int = 1,
     out_root: Path | None = None,
     ledger: Path | None = None,

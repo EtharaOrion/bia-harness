@@ -3,7 +3,10 @@
 ## 1. Current state
 
 <!-- AUTO-GENERATED:CURRENT_STATE:START -->
-_(no runs yet)_
+- **Total attempts recorded**: 0
+- **Best step_to_3_28**: —
+- **Distinct variants that hit target**: 0
+- **Stuck counter (by slug-family)**: —
 <!-- AUTO-GENERATED:CURRENT_STATE:END -->
 
 ## 2. Active picklist (LLM-owned)

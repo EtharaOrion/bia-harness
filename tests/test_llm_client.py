@@ -75,6 +75,45 @@ def test_messages_sends_expected_body_and_headers():
     assert sent["tools"] == tools
 
 
+def test_messages_omits_temperature_by_default():
+    body = {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+    client = LLMClient(base_url="http://172.17.0.1:8765", api_key="k", model="claude-opus-5")
+    with patch("llm_client.httpx.Client") as mock_client_cls:
+        instance = mock_client_cls.return_value.__enter__.return_value
+        instance.post.return_value = _mock_response(200, body)
+        client.messages(system="SYS", messages=[{"role": "user", "content": "hi"}])
+    assert "temperature" not in instance.post.call_args.kwargs["json"]
+
+
+def test_server_retry_delay_prefers_header_then_bridge_body():
+    from llm_client import _server_retry_delay
+
+    hdr = _mock_response(429, {})
+    hdr.headers = {"retry-after": "12"}
+    assert _server_retry_delay(hdr) == 12.0
+
+    body = _mock_response(429, {"aurora_bridge": {"retry_after_seconds": 7}})
+    body.headers = {}
+    assert _server_retry_delay(body) == 7.0
+
+    none = _mock_response(429, {"error": {"type": "rate_limit"}})
+    none.headers = {}
+    assert _server_retry_delay(none) is None
+
+
+def test_messages_waits_for_server_requested_delay():
+    client = LLMClient(base_url="http://127.0.0.1:9", api_key="k", model="m", num_retries=1)
+    limited = _mock_response(429, {"aurora_bridge": {"retry_after_seconds": 9}})
+    limited.headers = {}
+    ok = _mock_response(200, {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"})
+    ok.headers = {}
+    with patch("llm_client.httpx.Client") as mock_client_cls, patch("llm_client.time.sleep") as slept:
+        instance = mock_client_cls.return_value.__enter__.return_value
+        instance.post.side_effect = [limited, ok]
+        client.messages(system="s", messages=[{"role": "user", "content": "hi"}])
+    assert slept.call_args[0][0] >= 9.0
+
+
 def test_messages_rate_limit_retries_then_raises():
     client = LLMClient(base_url="http://127.0.0.1:9", api_key="k", model="m", num_retries=2)
     with patch("llm_client.httpx.Client") as mock_client_cls, patch("llm_client.time.sleep"):

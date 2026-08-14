@@ -22,3 +22,6 @@ codex-proxy/
 *.key
 .env
 .env.*
+runs/
+bia-venv/
+personal-docs/

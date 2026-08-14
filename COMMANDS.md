@@ -147,7 +147,7 @@ python runner/harness.py \
   --task bia-track3-optimizer-novelty \
   --backend harbor \
   --llm-config proxy/claude-code-oauth.json \
-  --agent claude_code \
+  --agent claude-code \
   --attempts 20 --seeds 2 --llm-retries 3
 ```
 
