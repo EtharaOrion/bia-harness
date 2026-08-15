@@ -59,18 +59,6 @@ def test_build_harbor_cmd_with_llm_config(tmp_path):
     assert "--allow-agent-host" in cmd
 
 
-def test_container_base_url_darwin_rewrite():
-    with patch("harness.platform.system", return_value="Darwin"):
-        got = harness._container_base_url("http://172.17.0.1:8765")
-        assert got == "http://host.docker.internal:8765"
-
-
-def test_container_base_url_linux_unchanged():
-    with patch("harness.platform.system", return_value="Linux"):
-        got = harness._container_base_url("http://172.17.0.1:8765")
-        assert got == "http://172.17.0.1:8765"
-
-
 def test_load_llm_config_missing_field(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"model": "x", "base_url": "y"}))
@@ -87,11 +75,6 @@ def test_load_llm_config_ok(tmp_path):
     }))
     cfg = harness.load_llm_config(good)
     assert cfg["model"] == "anthropic/claude-opus-4-8"
-
-
-def test_preflight_bridge_unreachable_raises():
-    with pytest.raises(RuntimeError, match="claude_code_bridge unreachable"):
-        harness.preflight_bridge("http://127.0.0.1:1", timeout_sec=0.5)
 
 
 def test_reward_read_from_verifier_result_not_top_level():
@@ -138,9 +121,3 @@ def test_harbor_model_flag_strips_provider_prefix(tmp_path):
 def test_default_agent_is_a_real_harbor_agent():
     args = harness.parse_args(["--task", "nanogpt-smoke", "--backend", "dry"])
     assert args.agent == "claude-code"
-
-
-def test_task_uuid_resolution():
-    task_dir = harness.resolve_task("b92e1502-7efe-5004-af4a-a7715da77b41")
-    assert task_dir.name == "b92e1502-7efe-5004-af4a-a7715da77b41"
-    assert (task_dir / "task.toml").is_file()

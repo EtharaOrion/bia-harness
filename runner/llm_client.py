@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import random
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +12,14 @@ from typing import Any
 import httpx
 
 
+HEARTBEAT_INTERVAL_SEC = 15.0
+
+
 MAX_RETRY_SLEEP_SEC = 60.0
+# Floor for 429/529 backoff. Anthropic throttle windows recover in
+# ~30-60s and rarely send a Retry-After header for OAuth-tier tokens,
+# so a sub-second exponential-backoff first retry is always wasted.
+MIN_RATE_LIMIT_SLEEP_SEC = 30.0
 
 
 class LLMError(RuntimeError):
@@ -81,15 +90,36 @@ class LLMClient:
 
         delay = 1.0
         for attempt in range(self.num_retries + 1):
+            stop_event = threading.Event()
+            call_started = time.monotonic()
+
+            def _heartbeat() -> None:
+                while not stop_event.wait(HEARTBEAT_INTERVAL_SEC):
+                    elapsed = time.monotonic() - call_started
+                    print(f"[llm_client] still waiting on LLM response "
+                          f"(attempt {attempt + 1}/{self.num_retries + 1}, "
+                          f"{elapsed:.0f}s elapsed) …",
+                          file=sys.stderr, flush=True)
+
+            hb = threading.Thread(target=_heartbeat, daemon=True)
+            hb.start()
             try:
                 with httpx.Client(timeout=self.timeout_sec) as client:
                     resp = client.post(url, headers=headers, json=body)
             except httpx.TimeoutException as e:
+                stop_event.set()
+                hb.join(timeout=0.5)
                 if attempt >= self.num_retries:
                     raise LLMError(f"timeout after {self.num_retries + 1} attempts: {e}") from e
-                time.sleep(delay + random.uniform(0, 0.5))
+                wait = delay + random.uniform(0, 0.5)
+                print(f"[llm_client] timeout (attempt {attempt + 1}/{self.num_retries + 1}); "
+                      f"sleeping {wait:.1f}s then retrying", file=sys.stderr, flush=True)
+                time.sleep(wait)
                 delay = min(delay * 2, 30.0)
                 continue
+
+            stop_event.set()
+            hb.join(timeout=0.5)
 
             if resp.status_code in (429, 529):
                 server_wait = _server_retry_delay(resp)
@@ -99,8 +129,14 @@ class LLMClient:
                         f"rate-limited (HTTP {resp.status_code}) after "
                         f"{self.num_retries + 1} attempts{hint}"
                     )
-                wait = server_wait if server_wait is not None else delay
-                time.sleep(min(wait, MAX_RETRY_SLEEP_SEC) + random.uniform(0, 0.5))
+                wait_src = server_wait if server_wait is not None else max(delay, MIN_RATE_LIMIT_SLEEP_SEC)
+                wait = min(wait_src, MAX_RETRY_SLEEP_SEC) + random.uniform(0, 0.5)
+                origin = "server Retry-After" if server_wait is not None else "backoff-floored"
+                print(f"[llm_client] HTTP {resp.status_code} rate-limited "
+                      f"(attempt {attempt + 1}/{self.num_retries + 1}); "
+                      f"sleeping {wait:.1f}s ({origin}) then retrying",
+                      file=sys.stderr, flush=True)
+                time.sleep(wait)
                 delay = min(delay * 2, MAX_RETRY_SLEEP_SEC)
                 continue
 

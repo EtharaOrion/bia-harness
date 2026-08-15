@@ -5,7 +5,10 @@ Run task `nanogpt/track3-speedrun` and iterate toward the highest reward per the
 ## Frontier
 
 <!-- AUTO-GENERATED:FRONTIER:START -->
-_(no target hits recorded yet)_
+| Rank | Variant | step_to_3_28 | final_val_loss | seed |
+|------|---------|--------------|----------------|------|
+| 1 | `iter0.py` | 3000 | 3.249 | 0 |
+| 2 | `iter1.py` | 3000 | 3.249 | 0 |
 <!-- AUTO-GENERATED:FRONTIER:END -->
 
 ## Combos worth trying (LLM-owned)

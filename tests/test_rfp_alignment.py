@@ -112,17 +112,6 @@ def test_seeds_default_is_2():
     assert args.seeds == 2
 
 
-def test_rfp_flag_defaults_to_11aug_requirements():
-    args = harness.parse_args(["--task", "nanogpt-smoke", "--backend", "dry"])
-    assert args.rfp.name == "11aug requirements.md"
-
-
-def test_rfp_flag_override(tmp_path):
-    args = harness.parse_args(["--task", "nanogpt-smoke", "--backend", "dry",
-                               "--rfp", str(tmp_path / "custom-rfp.md")])
-    assert args.rfp == tmp_path / "custom-rfp.md"
-
-
 def test_stop_condition_flags_default_to_none():
     args = harness.parse_args(["--task", "nanogpt-smoke", "--backend", "dry"])
     assert args.target_reward is None

@@ -384,17 +384,6 @@ def _write_loop_terminated(work_root: Path, reason: str, message: str, *,
     return path
 
 
-def _snapshot_rfp(work_root: Path, rfp_path: Path | None) -> Path | None:
-    if rfp_path is None:
-        return None
-    if not rfp_path.is_file():
-        return None
-    dst = work_root / "rfp_snapshot.md"
-    if not dst.exists():
-        shutil.copy2(rfp_path, dst)
-    return dst
-
-
 def run_loop(
     task,
     iterations: int,
@@ -415,7 +404,6 @@ def run_loop(
     codex_bridge_key: str | None = None,
     judge_model: str = "gpt5.6-sol",
     precomputed_judgements: Path | None = None,
-    rfp_path: Path | None = None,
     target_reward: float | None = None,
     max_wall_clock_sec: float | None = None,
     max_input_tokens: int | None = None,
@@ -446,7 +434,9 @@ def run_loop(
 
     work_root = resolve_work_root(task_dir, harness_root=harness_root)
     work_root.mkdir(parents=True, exist_ok=True)
-    _snapshot_rfp(work_root, rfp_path)
+
+    print(f"[harness] task={task_id!r}  iterations={iterations}  backend={backend}  "
+          f"seeds_per_iter={seeds_per_iter}  work_root={work_root}", file=sys.stderr, flush=True)
 
     all_rows: list[dict] = []
     attempts_completed = 0
@@ -478,6 +468,8 @@ def run_loop(
             )
             break
         run_num = loop_idx + 1
+        print(f"[harness] === attempt {run_num}/{iterations} START ===",
+              file=sys.stderr, flush=True)
 
         run_dir_policy = policy_dir / f"run{run_num:02d}"
         if not (run_dir_policy / "plan.md").exists():
@@ -581,6 +573,9 @@ def run_loop(
 
         for _turn in range(MAX_TURNS_PER_ITER):
             turn_count += 1
+            print(f"[harness] attempt {run_num} turn {turn_count}: calling planner LLM "
+                  f"(system={len(system_prompt)}B, msgs={len(conversation)}) …",
+                  file=sys.stderr, flush=True)
             resp = client.messages(
                 system=system_prompt,
                 messages=conversation,
@@ -591,6 +586,10 @@ def run_loop(
             turn_out = int(usage.get("output_tokens") or 0)
             iter_input_tokens += turn_in
             iter_output_tokens += turn_out
+            print(f"[harness] attempt {run_num} turn {turn_count}: LLM returned "
+                  f"tokens_in={turn_in} tokens_out={turn_out} "
+                  f"tool_uses={len(resp.tool_uses)} stop_reason={resp.stop_reason}",
+                  file=sys.stderr, flush=True)
 
             raw_content = resp.raw.get("content") if isinstance(resp.raw, dict) else None
             _append_trajectory(trajectory_path, {
@@ -661,6 +660,10 @@ def run_loop(
         if not (variants_dir / variant_path.name).exists():
             shutil.copy2(variant_path, variants_dir / variant_path.name)
         _write_variant_diff(work_root, run_num, variant_snapshot)
+
+        print(f"[harness] attempt {run_num}: variant snapshot -> {variant_snapshot}; "
+              f"dispatching backend={backend} seeds={seeds_per_iter} …",
+              file=sys.stderr, flush=True)
 
         rows = harness_run(
             task_dir,

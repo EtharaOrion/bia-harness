@@ -3,10 +3,10 @@
 ## 1. Current state
 
 <!-- AUTO-GENERATED:CURRENT_STATE:START -->
-- **Total attempts recorded**: 0
-- **Best step_to_3_28**: —
-- **Distinct variants that hit target**: 0
-- **Stuck counter (by slug-family)**: —
+- **Total attempts recorded**: 4
+- **Best step_to_3_28**: 3000
+- **Distinct variants that hit target**: 2
+- **Stuck counter (by slug-family)**: {'iter0.py': 0, 'iter1.py': 0}
 <!-- AUTO-GENERATED:CURRENT_STATE:END -->
 
 ## 2. Active picklist (LLM-owned)

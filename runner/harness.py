@@ -19,14 +19,10 @@ LLM config (harbor backend):
 import argparse
 import json
 import os
-import platform
 import shutil
-import socket
 import subprocess
 import sys
 import tomllib
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -124,72 +120,6 @@ def load_llm_config(path: Path) -> dict:
         if k not in data:
             raise ValueError(f"llm-config {path} missing required field: {k}")
     return data
-
-
-def _container_base_url(base_url: str) -> str:
-    """On macOS Docker Desktop, 172.17.0.1 is not the host loopback; use host.docker.internal."""
-    if platform.system() != "Darwin":
-        return base_url
-    parsed = urlparse(base_url)
-    if parsed.hostname == "172.17.0.1":
-        netloc = f"host.docker.internal:{parsed.port}" if parsed.port else "host.docker.internal"
-        return parsed._replace(netloc=netloc).geturl()
-    return base_url
-
-
-def _host_side_base_url(base_url: str) -> str:
-    """Preflight from host must reach the bridge on the host, not the container-visible alias."""
-    parsed = urlparse(base_url)
-    if platform.system() == "Darwin" and parsed.hostname in ("172.17.0.1", "host.docker.internal"):
-        netloc = f"localhost:{parsed.port}" if parsed.port else "localhost"
-        return parsed._replace(netloc=netloc).geturl()
-    return base_url
-
-
-def preflight_bridge(base_url: str, timeout_sec: float = 3.0) -> None:
-    check_url = _host_side_base_url(base_url)
-    parsed = urlparse(check_url)
-    host = parsed.hostname
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    try:
-        with socket.create_connection((host, port), timeout=timeout_sec):
-            pass
-    except OSError as e:
-        raise RuntimeError(
-            f"claude_code_bridge unreachable at {host}:{port} ({e}). "
-            f"Start with: bash proxy/claude_code_bridge.sh start"
-        )
-
-
-def preflight_codex_bridge(base_url: str, timeout_sec: float = 3.0) -> None:
-    """SPEC_AUDIT R14: verify the Codex bridge is up BEFORE issuing any rubric judge call.
-
-    Silently letting BIA fall through to a network error mid-grade would print a stack
-    trace for every seed and give no operator hint. This raises loud once, up front.
-    """
-    check_url = _host_side_base_url(base_url).rstrip("/") + "/healthz"
-    req = urllib.request.Request(check_url, method="GET")
-    hint = (
-        "Start with: cd codex-proxy && KAIJU_CODEX_BRIDGE_SECRET=<pick-any> "
-        "./.venv/bin/python -m agent.openai_codex --host 127.0.0.1 --port 8790 "
-        "(one-time setup: python3 -m venv .venv && ./.venv/bin/pip install fastapi uvicorn httpx; "
-        "sign in via `codex login` so ~/.codex/auth.json exists)."
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-            if resp.status != 200:
-                raise RuntimeError(
-                    f"codex bridge at {check_url} returned HTTP {resp.status}; "
-                    f"expected 200. {hint}"
-                )
-    except urllib.error.URLError as e:
-        raise RuntimeError(
-            f"codex bridge unreachable at {check_url} ({e.reason}). {hint}"
-        )
-    except OSError as e:
-        raise RuntimeError(
-            f"codex bridge unreachable at {check_url} ({e}). {hint}"
-        )
 
 
 def resolve_verifier_dir(task_dir: Path) -> Path | None:
@@ -368,7 +298,7 @@ def build_harbor_cmd(mounted_task: Path, seed: int, jobs_dir: Path, *,
     if llm_config:
         from llm_client import _strip_provider_prefix
 
-        container_url = _container_base_url(llm_config["base_url"])
+        container_url = llm_config["base_url"]
         cmd += ["-m", _strip_provider_prefix(llm_config["model"])]
         cmd += ["--ae", f"ANTHROPIC_BASE_URL={container_url}"]
         cmd += ["--ae", f"ANTHROPIC_API_KEY={llm_config['api_key']}"]
@@ -412,7 +342,6 @@ def dispatch_harbor(mounted_task: Path, seed: int, work_dir: Path,
     jobs_dir.mkdir(parents=True, exist_ok=True)
 
     if llm_config:
-        preflight_bridge(llm_config["base_url"])
         if agent == "nop":
             print("WARN: --llm-config set but --agent=nop (the no-op agent never calls the LLM). "
                   "Use --agent claude-code (or another litellm-based Harbor agent).",
@@ -533,8 +462,6 @@ def run(task, seeds: int, backend: str, out_root: Path, *,
 
     verifier_dir = resolve_verifier_dir(task_dir) if verifier_enabled else None
     bia_active = verifier_dir is not None and attempt_dir is not None
-    if bia_active and (verifier_dir / "rubric.json").is_file():
-        preflight_codex_bridge(codex_bridge_url)
 
     for seed in range(seeds):
         if attempt_dir is not None:
@@ -720,10 +647,6 @@ def parse_args(argv):
                    help="Codex bridge auth secret. Default: env KAIJU_CODEX_BRIDGE_SECRET or OPENAI_API_KEY.")
     p.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL,
                    help=f"Rubric judge model name (default: {DEFAULT_JUDGE_MODEL}).")
-    p.add_argument("--rfp", type=Path,
-                   default=Path("/Users/apple/Desktop/bia/personal-docs/11aug requirements.md"),
-                   help="Path to the RFP/requirements Markdown. Snapshotted into "
-                        "work/<uuid>/rfp_snapshot.md on the first attempt for provenance.")
     p.add_argument("--target-reward", type=float, default=None,
                    help="R11 stop condition: halt loop when any seed's consolidated_reward >= target.")
     p.add_argument("--max-wall-clock-sec", type=float, default=None,
@@ -789,7 +712,6 @@ def main(argv):
             codex_bridge_url=args.codex_bridge_url,
             codex_bridge_key=codex_bridge_key,
             judge_model=args.judge_model,
-            rfp_path=args.rfp,
             target_reward=args.target_reward,
             max_wall_clock_sec=args.max_wall_clock_sec,
             max_input_tokens=args.max_input_tokens,
