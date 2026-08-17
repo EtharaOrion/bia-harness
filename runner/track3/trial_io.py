@@ -5,13 +5,21 @@ Ported from track3-pipeline/tools/refine.py (`read_trial`, `parent_artifacts`,
 `_task_budget_hours`). Classification lives in the sibling `classify` module and
 is imported, not duplicated.
 
-Two things here are load-bearing and deliberate:
+Three things here are load-bearing and deliberate:
 
-* The reward is read from ``verifier/reward_full.json``, NOT ``verifier/reward.json``.
-  Harbor writes the short reward.json for its own result plumbing and the sibling
-  judge module reads that file; reward_full.json is the verifier's full record and
-  is the only one carrying ``reason`` and ``metrics``. Conflating the two silently
-  drops the reason string, which is what `_graded_step` and `classify` run on.
+* The reward is COMPUTED by `track3.reward` from the FULL-DENSITY parsed loss curve
+  (`parent_artifacts` returns it as `full_curve`), not from the thinned `parent_curve`
+  that gets rendered into the agent's prompt. `MAX_CURVE_POINTS` is a display budget
+  and must never move a score. `read_trial` pops `full_curve` once it has scored, so
+  it never reaches the ledger row.
+* The task verifier and the LLM judge are currently UNWIRED (see the note in
+  `track3/loop.py`), so ``verifier/reward_full.json`` no longer supplies the score,
+  but it is still
+  read, because it is the only file carrying ``reason`` and ``metrics``. It is also
+  still the FULL record and not ``verifier/reward.json``: harbor writes the short
+  reward.json for its own result plumbing and the sibling judge module reads that
+  file, and conflating the two silently drops the reason string, which is what
+  `_graded_step` and `classify` run on.
 * Every reader swallows every exception and falls back to a default. A trial dir
   is an artifact of a run that may have crashed, been killed mid-write, or never
   produced a verifier at all; a parser that raises on a partial trial turns a
@@ -31,6 +39,7 @@ import re
 from datetime import datetime
 
 from track3.classify import _graded_step, classify
+from track3.reward import reward_from_curve
 
 MAX_FINDINGS_CHARS = 1200
 MAX_PARENT_SOURCE_CHARS = 18000
@@ -57,15 +66,36 @@ def read_trial(trial: pathlib.Path) -> dict:
     agent = res.get("agent_result") or {}
     logs = sorted(trial.glob("artifacts/**/full_seed*.log"))
     metrics = rf.get("metrics") or {}
-    reward = float(rf.get("reward") or 0.0)
-    reason = rf.get("reason") or ""
     n_seeds = int(metrics.get("n_seeds") or len(logs))
     harness_error = res.get("exception_info") is not None
     budget_frac = _budget_used(res, trial)
+
+    # The reward is COMPUTED from the measured curve, not read from `rf["reward"]`.
+    # The verifier and the LLM judge are currently unwired (see track3/loop.py), so
+    # `track3.reward` is the only thing that scores an iteration. reward_full is
+    # still read above and below for `reason` and `metrics`, which nothing else
+    # carries, and which stay useful whenever the verifier is re-enabled.
+    artifacts = parent_artifacts(trial)
+    # SCORED ON THE FULL-DENSITY POINTS, NEVER ON `parent_curve`, which is thinned to
+    # MAX_CURVE_POINTS purely so the history markdown fits the agent's prompt. Scoring
+    # off the thinned curve would make that display constant load-bearing, and thinning
+    # can only ever find a crossing late, so every retune would re-score the campaign
+    # downwards. POPPED, not read: ~61 points per seed per iteration that no reader
+    # downstream consumes have no business in the splat below and in every ledger row.
+    curve = artifacts.pop("full_curve", None)
+    reward, curve_step = reward_from_curve(curve)
+    reason = rf.get("reason") or ("" if curve else "no_curve")
+    # A curve that exists but never crosses may still have been graded by the verifier,
+    # which applies a significance margin and a persistence check this module does not,
+    # so its step is worth reporting; with no curve at all there is nothing to report
+    # and None is the honest answer.
+    graded_step = curve_step if curve_step is not None else (
+        _graded_step(reason) if curve else None)
+
     return {
         "reward": reward,
         "reason": reason,
-        "graded_step": _graded_step(reason),
+        "graded_step": graded_step,
         "n_seeds": n_seeds,
         "outcome": classify(reward, reason, n_seeds,
                             harness_error=harness_error,
@@ -79,7 +109,7 @@ def read_trial(trial: pathlib.Path) -> dict:
         "started_at": res.get("started_at"),
         "finished_at": res.get("finished_at"),
         "trial_dir": str(trial),
-        **parent_artifacts(trial),
+        **artifacts,
     }
 
 
@@ -89,9 +119,16 @@ def parent_artifacts(trial: pathlib.Path) -> dict:
     AIDE's operators act on a parent node's source; the summary describes history, it does
     not replace the artifact. Without this the next iteration must reimplement from prose.
 
+    The curve is returned at BOTH densities from a single parse of each log, because
+    the two have different consumers and must not be conflated: `parent_curve` is
+    thinned to ~MAX_CURVE_POINTS for the agent-facing history markdown, while
+    `full_curve` is every parsed point and is what `track3.reward` scores. A caller
+    that scores the thinned curve makes the display budget load-bearing on the reward.
+
     Keys are ABSENT rather than None when nothing is found, so a caller can splat the
     result into a row and distinguish "no artifact" from "artifact was empty". An empty
-    dict is a valid return.
+    dict is a valid return. `full_curve` is the one key a splatting caller should drop
+    first -- see `read_trial`.
     """
     out = {}
     srcs = sorted(trial.glob("artifacts/**/optimizer.py"), key=lambda p: len(p.parts))
@@ -103,12 +140,13 @@ def parent_artifacts(trial: pathlib.Path) -> dict:
         out["parent_source_lines"] = text.count("\n") + 1
         out["parent_source_truncated"] = len(text) > MAX_PARENT_SOURCE_CHARS
 
-    curve = {}
+    curve, full = {}, {}
     for lg in sorted(trial.glob("artifacts/**/full_seed*.log")):
         pts = [(int(m.group(1)), float(m.group(2))) for m in
                VAL_LOSS_RE.finditer(lg.read_text(errors="replace"))]
         if pts:
             seed = lg.stem.replace("full_seed", "")
+            full[seed] = pts
             step = max(1, len(pts) // MAX_CURVE_POINTS)
             thinned = pts[::step]
             # The final point is the one the verifier grades on; thinning must never
@@ -118,6 +156,7 @@ def parent_artifacts(trial: pathlib.Path) -> dict:
             curve[seed] = thinned
     if curve:
         out["parent_curve"] = curve
+        out["full_curve"] = full
     return out
 
 

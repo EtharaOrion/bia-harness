@@ -94,7 +94,7 @@ owns it.
 
 ```bash
 python runner/track3/loop.py --task <name|uuid|path> --iterations N \
-  [--start-at N] [--no-summarise] [--no-judge] [--harbor-bin PATH]
+  [--start-at N] [--summarise] [--judge] [--harbor-bin PATH]
 ```
 
 On disk, per task:
@@ -109,6 +109,31 @@ runs/track3/<slug>/
 ```
 
 `<slug>` comes from the task's uuid, falling back to a slug of `[task].name`.
+
+### Reward
+
+`runner/track3/reward.py` scores an iteration from the steps it took to reach the
+target loss:
+
+```
+reward = max(0.0, min(1.0, (BASELINE_STEPS - step) / (BASELINE_STEPS - TARGET_STEPS)))
+
+BASELINE_STEPS = 3500    TARGET_STEPS = 2900    TARGET_LOSS = 3.28
+```
+
+`step` is the first point at which **every** seed has reached `TARGET_LOSS`, so a run
+is only as fast as its slowest seed. Reaching target at 3500 scores 0.0, at 3200
+scores 0.5, at 2900 or better scores 1.0. A run that never reaches target scores 0.0.
+
+The step is measured on the **full-density** log points, not on the thinned
+`parent_curve` that gets rendered into the prompt — thinning is a display budget and
+must never move a score.
+
+### Currently unwired
+
+The task's own verifier and the LLM judge/summariser are **not** in the default path.
+Reward comes from the formula above; `judge.py` and `summariser.py` remain on disk and
+tested, and are opt-in via `--judge` / `--summarise`.
 
 **The ledger is the loop state.** `start` is derived from its length and every row is
 appended the moment it is produced, so an interrupted campaign resumes where it

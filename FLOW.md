@@ -99,10 +99,15 @@ container, and our code drives everything around it.
 │                                                                         │
 │  5. Locate + parse the trial (track3/trial_io.py)                       │
 │     find_trial(jobs_dir/job_name, since=launch time), then read_trial:  │
-│     reward/reason from verifier/reward_full.json (NOT reward.json),     │
 │     tokens + cost from result.json, submitted optimizer.py and val_loss │
-│     curve from artifacts/. Every reader falls back on error: a partial  │
+│     curve from artifacts/, reason/metrics from verifier/reward_full.json│
+│     (NOT reward.json). Every reader falls back on error: a partial      │
 │     trial must yield a reward-0 row, not a traceback.                   │
+│                                                                         │
+│  5b. Score from the curve (track3/reward.py) — VERIFIER UNWIRED         │
+│     reward = clamp01((3500 - step) / 600) where `step` is the first at  │
+│     which EVERY seed reaches val_loss <= 3.28 (max across seeds; None   │
+│     if any seed never does). The verifier's own reward is ignored.      │
 │                                                                         │
 │  6. Classify (track3/classify.py)                                       │
 │     graded_pass | graded_miss | gate_fail | agent_abandoned_run |       │
@@ -111,12 +116,12 @@ container, and our code drives everything around it.
 │  7. Checkpoint facts -> history/iterNN_facts.json                       │
 │     BEFORE any LLM enrichment, so a SIGKILL cannot lose measured facts. │
 │                                                                         │
-│  8. Enrich (advisory, optional)                                         │
+│  8. Enrich (advisory, optional) — CURRENTLY UNWIRED, OFF BY DEFAULT     │
 │     judge.grade_attempt (veto-only verdict) and                         │
 │     summariser.summarize_iteration (prose for the next prompt).         │
 │     Both wrapped in `except BaseException` — they raise SystemExit, and │
 │     neither may cost a completed iteration.                             │
-│     Skip with --no-judge / --no-summarise.                              │
+│     Opt IN with --judge / --summarise; a bare run reaches no LLM.       │
 │                                                                         │
 │  9. Append one row to ledger.jsonl, then loop back to step 2            │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -124,7 +129,7 @@ container, and our code drives everything around it.
 
 ```bash
 python runner/track3/loop.py --task <name|uuid|path> --iterations N \
-  [--start-at N] [--no-summarise] [--no-judge] [--harbor-bin PATH]
+  [--start-at N] [--summarise] [--judge] [--harbor-bin PATH]
 ```
 
 Per-task layout under `runs/track3/<slug>/`:

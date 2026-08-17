@@ -13,6 +13,22 @@ BEFORE the ledger row was written. Every measured fact was lost to save a discar
 advisory verdict. So the tests below assert the opposite behaviour at three layers:
 `judge_trajectory` returns an error dict, `run_iteration` still returns a full row,
 and the facts checkpoint is on disk before enrichment is ever attempted.
+
+THE JUDGE AND SUMMARISER ARE NOW OFF BY DEFAULT. They are unwired, not deleted: the
+parameters and both code paths survive verbatim and every durability test above is
+still exercised by passing `summarise=True, judge_enabled=True` explicitly. What
+changed is the default and the CLI surface -- `--summarise`/`--judge` are opt-IN, so
+a bare invocation reaches no LLM at all. `test_default_run_calls_neither_*` asserts
+that directly, because a default that silently re-enables an LLM is exactly the
+regression this unwiring exists to prevent.
+
+The reward is likewise no longer the verifier's. `read_trial` computes it from the
+fixture's own loss curve via `track3.reward`, at FULL log density: the two seeds first
+reach 3.28 at steps 3150 and 3175, so (3500-3175)/600 = 0.541666... is the number
+every assertion below expects, replacing the fixture verifier's 0.5. It is NOT read
+off the thinned `parent_curve`, which would say 3250 / 0.41666... and would make the
+`MAX_CURVE_POINTS` display budget load-bearing on the score; `test_trial_io.py` owns
+the regression tests for that.
 """
 
 from __future__ import annotations
@@ -30,6 +46,12 @@ from track3.loop import judge_trajectory, load_ledger, main, refine, run_iterati
 
 FIXTURE_TRIAL = Path(__file__).parent / "fixtures" / "track3_trial"
 TASK_DIRNAME = "2739a678-1759-516d-8ba7-1cd023267ea8"
+
+# What the fixture trial's own full-density curve is worth: (3500-3175)/600.
+FIXTURE_REWARD = 0.5416666666666666
+
+# Enrichment is opt-in now, so the durability tests must ask for it by name.
+ENRICHED = {"summarise": True, "judge_enabled": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -118,6 +140,13 @@ def fake_harbor(calls: list, *, produce_trial: bool = True, returncode: int = 0)
         return subprocess.CompletedProcess(cmd, returncode, stdout="", stderr="")
 
     return _run
+
+
+def _never_called(what: str):
+    """A stub that turns "was silently invoked" into a failure instead of a network call."""
+    def _boom(*a, **k):
+        raise AssertionError(f"{what} was called despite being unwired")
+    return _boom
 
 
 def iterate(monkeypatch, i, base_cfg, history, tmp_path, task_dir, **kw):
@@ -251,11 +280,11 @@ def test_judge_systemexit_does_not_destroy_the_iteration(
         raise SystemExit("judge unreachable")
 
     monkeypatch.setattr(judge, "grade_attempt", _exit)
-    row, _ = iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir)
+    row, _ = iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir, **ENRICHED)
 
     # The measured facts survive intact...
     assert row["iteration"] == 1
-    assert row["reward"] == 0.5
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
     assert row["outcome"] == "graded_pass"
     assert row["n_seeds"] == 2
     assert row["trial_dir"]
@@ -264,7 +293,7 @@ def test_judge_systemexit_does_not_destroy_the_iteration(
     # The checkpoint was written BEFORE the judge ran, which is why it exists at all.
     facts = tmp_path / "history" / "iter01_facts.json"
     assert facts.is_file()
-    assert json.loads(facts.read_text())["reward"] == 0.5
+    assert json.loads(facts.read_text())["reward"] == pytest.approx(FIXTURE_REWARD)
 
 
 def test_summariser_systemexit_degrades_rather_than_propagates(
@@ -273,9 +302,9 @@ def test_summariser_systemexit_degrades_rather_than_propagates(
     monkeypatch.setattr(
         summariser, "summarize_iteration",
         lambda *a, **k: (_ for _ in ()).throw(SystemExit("summariser gone")))
-    row, _ = iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir)
+    row, _ = iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir, **ENRICHED)
 
-    assert row["reward"] == 0.5
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
     assert "summariser_failed" in row["summary"]["_degraded"]
     assert "SystemExit" in row["summary"]["_degraded"]
     assert (tmp_path / "history" / "iter01_facts.json").is_file()
@@ -299,7 +328,7 @@ def test_facts_checkpoint_precedes_enrichment(
         raise SystemExit("judge unreachable")
 
     monkeypatch.setattr(judge, "grade_attempt", _record)
-    iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir)
+    iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir, **ENRICHED)
     assert seen["existed_when_judge_ran"] is True
 
 
@@ -318,11 +347,12 @@ def test_ledger_row_appended_when_both_judge_and_summariser_fail(
         lambda *a, **k: (_ for _ in ()).throw(SystemExit("summariser gone")))
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
 
-    rows = refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+    rows = refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor",
+                  **ENRICHED)
 
     written = load_ledger(tmp_path / "ledger.jsonl")
     assert len(written) == 1
-    assert written[0]["reward"] == 0.5
+    assert written[0]["reward"] == pytest.approx(FIXTURE_REWARD)
     assert "SystemExit" in written[0]["rubric_verdicts"]["error"]
     assert "summariser_failed" in written[0]["summary"]["_degraded"]
     # What was returned is what was persisted. Compared key-by-key rather than with
@@ -331,6 +361,64 @@ def test_ledger_row_appended_when_both_judge_and_summariser_fail(
     assert set(written[0]) == set(rows[0])
     for key in set(written[0]) - {"parent_curve"}:
         assert written[0][key] == rows[0][key], key
+
+
+# --------------------------------------------------------------------------- #
+# UNWIRED BY DEFAULT -- judge and summariser are off unless asked for
+# --------------------------------------------------------------------------- #
+
+
+def test_default_run_iteration_calls_neither_judge_nor_summariser(
+    monkeypatch, base_cfg, tmp_path, task_dir
+):
+    """The default path must not touch an LLM, and must still produce a full row."""
+    monkeypatch.setattr(judge, "grade_attempt", _never_called("judge"))
+    monkeypatch.setattr(summariser, "summarize_iteration", _never_called("summariser"))
+
+    row, _ = iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir)
+
+    assert "rubric_verdicts" not in row
+    assert "summary" not in row
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
+    assert row["outcome"] == "graded_pass"
+    assert row["n_seeds"] == 2
+    assert (tmp_path / "history" / "iter01_facts.json").is_file()
+
+
+def test_default_refine_calls_neither_judge_nor_summariser(
+    monkeypatch, task_dir, tmp_path
+):
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+    monkeypatch.setattr(judge, "grade_attempt", _never_called("judge"))
+    monkeypatch.setattr(summariser, "summarize_iteration", _never_called("summariser"))
+
+    rows = refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    assert "rubric_verdicts" not in rows[0]
+    assert "summary" not in rows[0]
+    assert rows[0]["reward"] == pytest.approx(FIXTURE_REWARD)
+
+
+def test_signature_defaults_are_off():
+    """Assert the defaults themselves, so a caller that omits them cannot be surprised."""
+    import inspect
+
+    for fn in (run_iteration, refine):
+        params = inspect.signature(fn).parameters
+        assert params["summarise"].default is False, fn.__name__
+        assert params["judge_enabled"].default is False, fn.__name__
+
+
+def test_enrichment_is_unwired_not_removed(monkeypatch, base_cfg, tmp_path, task_dir):
+    """Passing True re-enables both paths verbatim; the modules stay importable."""
+    row, _ = iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir, **ENRICHED)
+
+    assert row["rubric_verdicts"]["summary"] == "stub verdict"
+    assert row["rubric_verdicts"]["failed_rubrics"] == ["J2"]
+    assert row["summary"] == {"mechanism": "stub summary"}
 
 
 # --------------------------------------------------------------------------- #
@@ -616,20 +704,57 @@ def test_main_runs_and_reports_the_best_iteration(
     assert rc == 0
     out = capsys.readouterr().out
     assert "iterations in ledger : 1" in out
-    assert "best" in out and "0.5000" in out
+    assert "best" in out and f"{FIXTURE_REWARD:.4f}" in out
+    assert "0.5417" in out
     assert len(load_ledger(tmp_path / "ledger.jsonl")) == 1
 
 
-def test_main_flags_disable_enrichment(monkeypatch, task_dir, tmp_path):
+def test_main_default_invocation_enriches_nothing(monkeypatch, task_dir, tmp_path):
+    """A bare CLI run must reach no LLM at all -- the whole point of the unwiring."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+    monkeypatch.setattr(judge, "grade_attempt", _never_called("judge"))
+    monkeypatch.setattr(summariser, "summarize_iteration", _never_called("summariser"))
+
+    main(["--task", str(task_dir), "--iterations", "1",
+          "--harbor-bin", "/nonexistent/harbor"])
+
+    row = load_ledger(tmp_path / "ledger.jsonl")[0]
+    assert "rubric_verdicts" not in row
+    assert "summary" not in row
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
+
+
+def test_main_opt_in_flags_enable_enrichment(monkeypatch, task_dir, tmp_path):
+    """The code paths are unwired, not removed: --judge/--summarise bring them back."""
     from track3 import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
 
     main(["--task", str(task_dir), "--iterations", "1",
-          "--no-judge", "--no-summarise", "--harbor-bin", "/nonexistent/harbor"])
+          "--judge", "--summarise", "--harbor-bin", "/nonexistent/harbor"])
 
     row = load_ledger(tmp_path / "ledger.jsonl")[0]
-    assert "rubric_verdicts" not in row
-    assert "summary" not in row
-    assert row["reward"] == 0.5  # facts are recorded regardless
+    assert row["rubric_verdicts"]["summary"] == "stub verdict"
+    assert row["summary"] == {"mechanism": "stub summary"}
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
+
+
+def test_main_rejects_the_retired_opt_out_flags(monkeypatch, task_dir, tmp_path):
+    """`--no-judge` must fail loudly, not be silently accepted as a no-op.
+
+    Left as an ignored argument it would read as "judging is off because I asked",
+    hiding the fact that it is off unconditionally.
+    """
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    # argparse must reject before anything launches; this makes a regression fail
+    # fast instead of blocking on a real `harbor run`.
+    monkeypatch.setattr(loop.subprocess, "run", _never_called("harbor"))
+    for flag in ("--no-judge", "--no-summarise"):
+        with pytest.raises(SystemExit):
+            main(["--task", str(task_dir), "--iterations", "1", flag])

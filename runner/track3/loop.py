@@ -7,6 +7,21 @@ parsing, history rendering, summarisation, judging, config building -- so this f
 is only the control flow that joins them. Nothing here is interactive: a caller
 passes a task and CODE drives every iteration to a ledger row.
 
+CURRENTLY UNWIRED: THE VERIFIER-DERIVED REWARD, THE JUDGE AND THE SUMMARISER.
+By default an iteration reaches no LLM and does not take its score from the task
+verifier. The reward is computed by `track3.reward` from the val_loss curve the run
+actually wrote -- `(BASELINE_STEPS - step) / (BASELINE_STEPS - TARGET_STEPS)`, clamped
+to [0, 1] -- so the loop scores itself from measurement alone. `verifier/reward_full.json`
+is still parsed for `reason` and `metrics` (harmless when absent); only its reward is
+ignored.
+
+This is an UNWIRING, not a removal. `judge.py` and `summariser.py` are untouched and
+still tested, `judge_trajectory` and the enrichment block below are intact, and both
+`run_iteration` and `refine` keep their `summarise` / `judge_enabled` parameters --
+only the defaults flipped to False. Re-enable per call by passing True, or from the
+CLI with the opt-IN `--summarise` / `--judge` flags. Everything in the DURABILITY note
+below therefore still applies verbatim the moment either is switched back on.
+
 Three properties are load-bearing, and each one exists because its absence cost a
 real run.
 
@@ -123,7 +138,7 @@ def judge_trajectory(trial: Path, model: str = "claude-opus-5") -> dict:
 
 def run_iteration(i: int, base_cfg: dict, history: str, *,
                   run_root: Path, task_dir: Path, harbor_bin: str,
-                  summarise: bool = True, judge_enabled: bool = True,
+                  summarise: bool = False, judge_enabled: bool = False,
                   timeout: float | None = None) -> dict:
     """Run one harbor job and return the ledger row describing it.
 
@@ -226,7 +241,7 @@ def run_iteration(i: int, base_cfg: dict, history: str, *,
 
 
 def refine(task, iterations: int = 3, *, start_at: int | None = None,
-           summarise: bool = True, judge_enabled: bool = True,
+           summarise: bool = False, judge_enabled: bool = False,
            harbor_bin: str | None = None,
            base_cfg_overrides: dict | None = None) -> list[dict]:
     """Drive `iterations` refinement rounds over `task`, appending each to the ledger.
@@ -279,24 +294,28 @@ def main(argv=None) -> int:
     ap.add_argument("--iterations", type=int, default=3)
     ap.add_argument("--start-at", type=int, default=None,
                     help="override the iteration number derived from the ledger")
-    ap.add_argument("--no-summarise", action="store_true",
-                    help="skip the LLM summariser; record verifier facts only")
-    ap.add_argument("--no-judge", action="store_true",
-                    help="skip the LLM trajectory grader; record verifier facts only")
+    ap.add_argument("--summarise", action="store_true",
+                    help="EXPERIMENTAL, currently unwired: opt in to the LLM "
+                         "summariser. Off by default; the loop records measured "
+                         "facts only and reaches no LLM.")
+    ap.add_argument("--judge", action="store_true",
+                    help="EXPERIMENTAL, currently unwired: opt in to the LLM "
+                         "trajectory grader. Off by default; its verdict is advisory "
+                         "and never moves the reward.")
     ap.add_argument("--harbor-bin", default=None,
                     help="harbor executable (default: resolved from $HARBOR_BIN, "
                          "the sibling .venv-harbor, then PATH)")
     args = ap.parse_args(argv)
 
     rows = refine(args.task, iterations=args.iterations, start_at=args.start_at,
-                  summarise=not args.no_summarise,
-                  judge_enabled=not args.no_judge,
+                  summarise=args.summarise,
+                  judge_enabled=args.judge,
                   harbor_bin=args.harbor_bin)
 
     print("\n=== summary ===")
     print(f"  iterations in ledger : {len(rows)}")
-    # Only rows the verifier actually scored are eligible to be "best": a reward of
-    # 0.0 from a run that never reached the verifier measures nothing.
+    # Only rows that actually reached the target loss are eligible to be "best": a
+    # reward of 0.0 means no seed crossing was measured at all, not a poor result.
     graded = [r for r in rows if (r.get("reward") or 0.0) > 0]
     if graded:
         best = max(graded, key=lambda r: r["reward"])
