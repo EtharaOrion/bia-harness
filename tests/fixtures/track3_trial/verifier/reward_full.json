@@ -1,0 +1,10 @@
+{
+  "detail": {
+    "novelty": {
+      "status": "deferred"
+    },
+    "seeds": 2
+  },
+  "reason": "graded_step=3200",
+  "reward": 0.5
+}
