@@ -32,6 +32,8 @@ TASKS_ROOT = HARNESS_ROOT / "tasks"
 DEFAULT_LEDGER = HARNESS_ROOT / "runs.jsonl"
 
 sys.path.insert(0, str(HARNESS_ROOT / "runner"))
+# legacy_planner modules are still imported flat, not as legacy_planner.*
+sys.path.insert(0, str(HARNESS_ROOT / "runner" / "legacy_planner"))
 from mount_variant import mount_task  # noqa: E402
 from ingest_result import normalize, append  # noqa: E402
 from track3.marking import mark_reward_payload  # noqa: E402

@@ -46,7 +46,7 @@ End-to-end lifecycle of one candidate variant across any registered task.
 │                       iff both present                                  │
 │     Runner shells: `python <mounted>/tests/grader.py <log>` -> JSON     │
 │                                                                         │
-│  7. Ingest (runner/ingest_result.py)                                    │
+│  7. Ingest (runner/legacy_planner/ingest_result.py)                                    │
 │     Normalize reward.json + metadata into 20-field canonical row.       │
 │     task_id populated from task.toml (not hardcoded).                   │
 │     Append one JSON line to runs.jsonl.                                 │

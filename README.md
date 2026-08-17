@@ -78,11 +78,12 @@ to {harbor,local,dry} → grader emits `reward.json` → ingest normalizes into
 
 ## Two refinement loops, and which one a task can use
 
-- **`runner/orchestrator.run_loop`** (via `harness.py --attempts N`). A planner LLM
-  authors a candidate *outside* the container and the harness injects it as a
-  `--variant` at mount time. This requires the task to declare a `[variant]` block
-  in `mount.toml`, so it **cannot** work for a task whose `/workspace` ships inside
-  the docker image — there is nothing to mount a variant into.
+- **`runner/legacy_planner/orchestrator.run_loop`** (via `harness.py --attempts N`).
+  A planner LLM authors a candidate *outside* the container and the harness injects
+  it as a `--variant` at mount time. This requires the task to declare a `[variant]`
+  block in `mount.toml`, so it **cannot** work for a task whose `/workspace` ships
+  inside the docker image — there is nothing to mount a variant into. Attempting it
+  raises `harness.VariantDeliveryImpossible`. Serves `nanogpt-speedrun`.
 - **`runner/track3`**. The agent authors `/workspace/submission/optimizer.py` and
   runs training *inside* the container; our code drives the outside of that loop.
   Each iteration renders prior results into markdown, injects it through

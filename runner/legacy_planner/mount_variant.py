@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path
 
 
-DEFAULT_HARNESS_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_HARNESS_ROOT = Path(__file__).resolve().parent.parent.parent
 MOUNT_TOML = "mount.toml"
 MOUNT_CONFIGS_DIR = "mount-configs"
 TASK_TOML = "task.toml"
