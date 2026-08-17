@@ -65,6 +65,100 @@ failures. It never retries training, changes the seed count, or creates an
 additional attempt. The former `--retries` flag has been removed because it
 mixed unrelated retry domains.
 
+## Code-driven refinement flow (`runner/track3`)
+
+The flow above injects an LLM-authored variant from *outside* the container. That
+depends on a `[variant]` block in `mount.toml`, so it cannot be used for a task whose
+`/workspace` ships inside the docker image. `runner/track3` is the other direction:
+the agent authors `/workspace/submission/optimizer.py` and runs training *inside* the
+container, and our code drives everything around it.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  1. Resolve task + run root                                             │
+│     resolve_task(name|uuid|path); run root = runs/track3/<slug>/        │
+│     start = len(ledger rows) + 1   (or --start-at)                      │
+│                                                                         │
+│  2. Render history (track3/history.py)                                  │
+│     prior ledger rows -> agent-facing markdown (facts table, per-       │
+│     iteration prose, best-so-far source, synthetic banner if any).      │
+│     Empty on iteration 1: nothing to inject, no file written.           │
+│     -> history/iterNN_history.md                                        │
+│                                                                         │
+│  3. Build + validate config (track3/harbor_config.py)                   │
+│     build_base_cfg -> job_name, jobs_dir (under the run root), agents[] │
+│     with model_name/env, tasks[].path, retry policy.                    │
+│     history path attached as extra_instruction_paths.                   │
+│     validate_cfg checks it against harbor's REAL JobConfig and rejects  │
+│     unknown keys at every depth (harbor itself would ignore them).      │
+│     -> .cfg_iterNN.json                                                 │
+│                                                                         │
+│  4. Launch                                                              │
+│     harbor run --config .cfg_iterNN.json --export-traces                │
+│     --export-traces is a CLI FLAG, not a config key (see below).        │
+│                                                                         │
+│  5. Locate + parse the trial (track3/trial_io.py)                       │
+│     find_trial(jobs_dir/job_name, since=launch time), then read_trial:  │
+│     reward/reason from verifier/reward_full.json (NOT reward.json),     │
+│     tokens + cost from result.json, submitted optimizer.py and val_loss │
+│     curve from artifacts/. Every reader falls back on error: a partial  │
+│     trial must yield a reward-0 row, not a traceback.                   │
+│                                                                         │
+│  6. Classify (track3/classify.py)                                       │
+│     graded_pass | graded_miss | gate_fail | agent_abandoned_run |       │
+│     harness_incomplete | unknown                                        │
+│                                                                         │
+│  7. Checkpoint facts -> history/iterNN_facts.json                       │
+│     BEFORE any LLM enrichment, so a SIGKILL cannot lose measured facts. │
+│                                                                         │
+│  8. Enrich (advisory, optional)                                         │
+│     judge.grade_attempt (veto-only verdict) and                         │
+│     summariser.summarize_iteration (prose for the next prompt).         │
+│     Both wrapped in `except BaseException` — they raise SystemExit, and │
+│     neither may cost a completed iteration.                             │
+│     Skip with --no-judge / --no-summarise.                              │
+│                                                                         │
+│  9. Append one row to ledger.jsonl, then loop back to step 2            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+```bash
+python runner/track3/loop.py --task <name|uuid|path> --iterations N \
+  [--start-at N] [--no-summarise] [--no-judge] [--harbor-bin PATH]
+```
+
+Per-task layout under `runs/track3/<slug>/`:
+
+| Path | Contents |
+|---|---|
+| `ledger.jsonl` | one JSON row per iteration, appended immediately |
+| `history/iterNN_history.md` | the markdown injected into iteration NN |
+| `history/iterNN_facts.json` | measured facts, written before LLM enrichment |
+| `.cfg_iterNN.json` | the exact config handed to `harbor run` |
+| `jobs/<job_name>/<trial>/` | harbor's own trial output |
+
+`<slug>` is the task uuid, or a slug of `[task].name` when the bundle declares none.
+
+**The ledger is the loop state.** `start` is derived from its length, and each row is
+written the moment it exists, so an interrupted campaign resumes rather than restarts —
+re-running the same command continues at the next iteration. A truncated final line
+(the normal shape of a kill mid-write) is skipped, not fatal.
+
+**`--export-traces` is a CLI flag by necessity.** `JobConfig` is pydantic
+`extra="ignore"`, so harbor silently DROPS keys it does not define. An `export_traces`
+key in the JSON would produce a config that looks correct while no
+`agent/trajectory.json` is written, leaving the summariser and judge with nothing to
+read and every seed flagged `verification_incomplete`.
+
+**Synthetic rows never pass as real.** `--backend dry` fabricates its curve from a seed
+hash; those rows carry `is_synthetic`, and `history.render_history` prints
+`marking.SYNTHETIC_BANNER` above the facts table when any shown row is synthetic. They
+are not validated results and must not be reported as such.
+
+`tests/test_track3_integration.py` exercises this against real harbor and real docker,
+but only under `TRACK3_INTEGRATION=1` (plus a harbor binary, a live docker daemon and
+the task image); otherwise it skips, because one iteration starts a GPU container.
+
 ## BIA verifier flow
 
 `bia_verifier` is an explicit post-run verification pipeline rather than a

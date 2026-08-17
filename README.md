@@ -35,7 +35,13 @@ under `tasks/`.
 ├── runner/                              multi-task orchestrator
 │   ├── harness.py                       --task <name|path> --variant <path> --backend {harbor,local,dry}
 │   ├── mount_variant.py                 mount_task(task, out, variant) reads mount.toml
-│   └── ingest_result.py                 20-field canonical row -> runs.jsonl
+│   ├── ingest_result.py                 20-field canonical row -> runs.jsonl
+│   └── track3/                          code-driven refinement loop (agent authors code in-container)
+│       ├── loop.py                      CLI + refine(); the ledger is the loop state
+│       ├── harbor_config.py             builds/validates the harbor --config JSON
+│       ├── history.py                   renders prior iterations into agent-facing markdown
+│       ├── trial_io.py                  one trial dir -> one flat ledger row
+│       └── classify.py, judge.py, summariser.py, marking.py
 ├── tests/                               pytest (38 tests, parametrized over tasks/*)
 ├── records/                             upstream Track-3 reference (results history, baselines)
 ├── legacy/                              Track-1 substrate + prior audit docs (not on run path)
@@ -69,6 +75,62 @@ Autonomous loop: orchestrator writes `policy/scratchpad/variants/<slug>.py`
 per `AGENTS.md` rules → runner mounts variant into the chosen task → dispatch
 to {harbor,local,dry} → grader emits `reward.json` → ingest normalizes into
 `runs.jsonl` → orchestrator reads the ledger and updates `plan.md`.
+
+## Two refinement loops, and which one a task can use
+
+- **`runner/orchestrator.run_loop`** (via `harness.py --attempts N`). A planner LLM
+  authors a candidate *outside* the container and the harness injects it as a
+  `--variant` at mount time. This requires the task to declare a `[variant]` block
+  in `mount.toml`, so it **cannot** work for a task whose `/workspace` ships inside
+  the docker image — there is nothing to mount a variant into.
+- **`runner/track3`**. The agent authors `/workspace/submission/optimizer.py` and
+  runs training *inside* the container; our code drives the outside of that loop.
+  Each iteration renders prior results into markdown, injects it through
+  `extra_instruction_paths` in a harbor `--config` JSON, launches the job, locates
+  and parses the resulting trial, classifies the outcome, and appends one ledger row.
+
+Use `run_loop` when the harness owns the candidate; use `track3` when the container
+owns it.
+
+```bash
+python runner/track3/loop.py --task <name|uuid|path> --iterations N \
+  [--start-at N] [--no-summarise] [--no-judge] [--harbor-bin PATH]
+```
+
+On disk, per task:
+
+```
+runs/track3/<slug>/
+├── ledger.jsonl                 one JSON row per iteration (append-only)
+├── history/iterNN_history.md    the markdown injected into iteration NN
+├── history/iterNN_facts.json    measured facts, checkpointed before LLM enrichment
+├── .cfg_iterNN.json             the exact config handed to `harbor run`
+└── jobs/<job_name>/<trial>/     harbor's own trial output
+```
+
+`<slug>` comes from the task's uuid, falling back to a slug of `[task].name`.
+
+**The ledger is the loop state.** `start` is derived from its length and every row is
+appended the moment it is produced, so an interrupted campaign resumes where it
+stopped instead of restarting — just re-run the same command. `--start-at` overrides
+that only when you need it.
+
+**`--export-traces` is passed as a CLI flag, never as a config key.** Harbor's
+`JobConfig` is pydantic `extra="ignore"`, so an unknown key is silently dropped: an
+`export_traces` entry in the JSON would leave the config looking correct while harbor
+wrote no `agent/trajectory.json`, and every seed would come back
+`verification_incomplete`. For the same reason `harbor_config.validate_cfg` is
+deliberately stricter than harbor and rejects unknown keys at every depth.
+
+**Synthetic results are marked and bannered.** The `--backend dry` path fabricates a
+val_loss curve from a seed hash — no model, no data, no gradients. Those rows carry
+`is_synthetic` and any surface rendering them (including the agent-facing history)
+prints a loud banner above the facts table. They must never be reported as real
+training results.
+
+The real harbor/docker path is covered by `tests/test_track3_integration.py`, which is
+opt-in: it only runs under `TRACK3_INTEGRATION=1` with docker and the task image
+present, because one iteration starts a real GPU container.
 
 ## Quickstart
 
