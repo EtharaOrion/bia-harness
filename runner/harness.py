@@ -34,6 +34,7 @@ DEFAULT_LEDGER = HARNESS_ROOT / "runs.jsonl"
 sys.path.insert(0, str(HARNESS_ROOT / "runner"))
 from mount_variant import mount_task  # noqa: E402
 from ingest_result import normalize, append  # noqa: E402
+from track3.marking import mark_reward_payload  # noqa: E402
 
 
 def resolve_task(task_arg: str) -> Path:
@@ -112,6 +113,58 @@ def resolve_task_uuid(task_dir: Path) -> str:
 
 def resolve_work_root(task_dir: Path, harness_root: Path = HARNESS_ROOT) -> Path:
     return harness_root / "work" / resolve_task_uuid(task_dir)
+
+
+class VariantDeliveryImpossible(RuntimeError):
+    """Raised when a --variant provably cannot reach the trial container.
+
+    Harbor uploads a fixed set of paths into a trial: the workdir, the
+    writable `_mount_targets()`, `/tests`, `/solution`, and the task's
+    `environment/` dir (harbor/environments/islo.py, ~L918-922). The task
+    root is NEVER mapped onto `/workspace`.
+
+    For tasks that ship `/workspace` inside a prebuilt docker image (e.g.
+    bia/track3nov:v2), `mount_task(..., variant=...)` copies the file into the
+    mounted task tree and harbor then leaves it behind: the container trains
+    whatever was baked into the image. The run reports success while grading
+    something unrelated to the variant. A silent wrong result is worse than a
+    crash, so the harness refuses the run instead.
+    """
+
+
+WORKSPACE_ARTIFACT_PREFIX = "/workspace/"
+
+
+def _workspace_ships_in_image(task_dir: Path) -> bool:
+    """True when the task's /workspace comes from its docker image, not the mount.
+
+    The signal is a task.toml that BOTH pins `[environment].docker_image` and
+    declares at least one `artifacts` entry under `/workspace/`: the task grades
+    a path the mounted tree does not own. Never raises -- a missing or malformed
+    task.toml simply yields False, leaving existing behaviour untouched.
+    """
+    task_toml = task_dir / "task.toml"
+    if not task_toml.is_file():
+        return False
+    try:
+        with task_toml.open("rb") as f:
+            data = tomllib.load(f)
+    except (tomllib.TOMLDecodeError, OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+
+    environment = data.get("environment")
+    if not isinstance(environment, dict) or not environment.get("docker_image"):
+        return False
+
+    artifacts = data.get("artifacts")
+    if not isinstance(artifacts, list):
+        return False
+    return any(
+        isinstance(a, str) and a.startswith(WORKSPACE_ARTIFACT_PREFIX)
+        for a in artifacts
+    )
 
 
 def load_llm_config(path: Path) -> dict:
@@ -246,7 +299,7 @@ def dispatch_dry(mounted_task: Path, seed: int, work_dir: Path,
     }
     (work_dir / "trajectory.json").write_text(json.dumps(trajectory, indent=2) + "\n")
 
-    return log, {"status": "success", "returncode": 0}
+    return log, {"status": "success", "returncode": 0, "is_synthetic": True}
 
 
 def dispatch_local(mounted_task: Path, seed: int, work_dir: Path,
@@ -277,13 +330,34 @@ def dispatch_local(mounted_task: Path, seed: int, work_dir: Path,
                  "returncode": proc.returncode}
 
 
+def resolve_harbor_bin() -> str:
+    """Pick the harbor executable, preferring an explicit one over bare PATH.
+
+    A bare "harbor" resolves through PATH, which on this host hits a stale uv-tool
+    install (0.13.2) whose docker provider declares neither `gpus` nor
+    `network_allowlist` -- so any GPU/allowlist task dies at capability validation
+    even when a patched harbor is present in a venv. Order: $HARBOR_BIN, then the
+    sibling .venv-harbor, then PATH.
+    """
+    explicit = os.environ.get("HARBOR_BIN")
+    if explicit:
+        return explicit
+    for candidate in (
+        Path.home() / "oer" / ".venv-harbor" / "bin" / "harbor",
+        HARNESS_ROOT.parent / ".venv-harbor" / "bin" / "harbor",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return "harbor"
+
+
 def build_harbor_cmd(mounted_task: Path, seed: int, jobs_dir: Path, *,
                      llm_config: dict | None, agent: str, attempts: int,
                      concurrent: int) -> list[str]:
     # --export-traces is load-bearing: Harbor defaults to --no-export-traces, and without
     # trial_dir/trajectory.json the BIA verifier flags every seed verification_incomplete.
     cmd = [
-        "harbor", "run",
+        resolve_harbor_bin(), "run",
         "-p", str(mounted_task),
         "-a", agent,
         "-k", str(attempts),
@@ -445,6 +519,19 @@ def run(task, seeds: int, backend: str, out_root: Path, *,
         raise ValueError("--seeds must be >= 1")
     task_dir = resolve_task(str(task)) if not isinstance(task, Path) else task.resolve()
     task_id = read_task_id(task_dir)
+    # Fail before any scaffolding/mounting/dispatch: harbor never uploads the task
+    # root into /workspace, so a variant for an image-shipped workspace would be
+    # silently dropped and the trial would grade the image's baked-in optimizer.
+    if backend == "harbor" and variant is not None and _workspace_ships_in_image(task_dir):
+        raise VariantDeliveryImpossible(
+            f"task '{task_id}' ({task_dir.name}) ships /workspace inside its docker image, "
+            f"so --variant {variant} cannot reach /workspace/submission/optimizer.py: "
+            "harbor uploads only the workdir, its mount targets, /tests, /solution and "
+            "environment/ into the trial -- never the task root. Running anyway would grade "
+            "the optimizer baked into the image and silently ignore the variant. "
+            "Drop --variant and have the agent author submission/optimizer.py in-container "
+            "instead."
+        )
     if ledger is None:
         ledger = resolve_ledger_path(task_id)
     from scaffold_policy import ensure_policy_scaffolded
@@ -476,6 +563,7 @@ def run(task, seeds: int, backend: str, out_root: Path, *,
         log = None
         harbor_trial_dir = None
         retries_used = 0
+        dispatch_synthetic = False
         dispatch_kwargs = {
             "llm_config": llm_config, "agent": agent,
             "attempts": 1, "concurrent": concurrent,
@@ -488,6 +576,7 @@ def run(task, seeds: int, backend: str, out_root: Path, *,
                     mount_task(task_dir, mounted, variant=variant)
                 log, meta = dispatch(mounted, seed, work, run_name, **dispatch_kwargs)
                 harbor_trial_dir = meta.get("harbor_trial_dir")
+                dispatch_synthetic = dispatch_synthetic or bool(meta.get("is_synthetic"))
                 if backend == "harbor" and "harbor_result" in meta:
                     reward_payload = _reward_from_harbor(meta["harbor_result"])
                 else:
@@ -508,8 +597,11 @@ def run(task, seeds: int, backend: str, out_root: Path, *,
         if attempt_dir is not None:
             work.mkdir(parents=True, exist_ok=True)
             reward_json_path = work / "reward.json"
+            marked_payload = mark_reward_payload(reward_payload, backend)
+            if dispatch_synthetic:
+                marked_payload["is_synthetic"] = True
             reward_json_payload = {
-                **reward_payload,
+                **marked_payload,
                 "_status": status,
                 "_error": error,
                 "_backend": backend,

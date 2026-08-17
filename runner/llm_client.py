@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx
+import anthropic
+from anthropic import Anthropic
 
 
 HEARTBEAT_INTERVAL_SEC = 15.0
@@ -20,6 +21,9 @@ MAX_RETRY_SLEEP_SEC = 60.0
 # ~30-60s and rarely send a Retry-After header for OAuth-tier tokens,
 # so a sub-second exponential-backoff first retry is always wasted.
 MIN_RATE_LIMIT_SLEEP_SEC = 30.0
+
+# Statuses we retry rather than surface: 429 throttle, 529 overloaded.
+_RETRYABLE_STATUSES = (429, 529)
 
 
 class LLMError(RuntimeError):
@@ -59,6 +63,15 @@ class LLMClient:
         self.model = _strip_provider_prefix(model)
         self.timeout_sec = timeout_sec
         self.num_retries = num_retries
+        # max_retries=0: this class owns the retry loop. Letting the SDK retry too
+        # would multiply the wait (SDK attempts x our attempts) and hide 429s from
+        # the rate-limit floor below.
+        self._client = Anthropic(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=self.timeout_sec,
+            max_retries=0,
+        )
 
     def messages(
         self,
@@ -69,7 +82,7 @@ class LLMClient:
         max_tokens: int = 4096,
         temperature: float | None = None,
     ) -> LLMResponse:
-        body: dict[str, Any] = {
+        kwargs: dict[str, Any] = {
             "model": self.model,
             "system": system,
             "messages": messages,
@@ -77,16 +90,9 @@ class LLMClient:
         }
         # Newer models reject `temperature` outright, so it is only sent when asked for.
         if temperature is not None:
-            body["temperature"] = temperature
+            kwargs["temperature"] = temperature
         if tools:
-            body["tools"] = tools
-
-        url = f"{self.base_url}/v1/messages"
-        headers = {
-            "content-type": "application/json",
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-        }
+            kwargs["tools"] = tools
 
         delay = 1.0
         for attempt in range(self.num_retries + 1):
@@ -104,35 +110,38 @@ class LLMClient:
             hb = threading.Thread(target=_heartbeat, daemon=True)
             hb.start()
             try:
-                with httpx.Client(timeout=self.timeout_sec) as client:
-                    resp = client.post(url, headers=headers, json=body)
-            except httpx.TimeoutException as e:
+                msg = self._client.messages.create(**kwargs)
+            except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
                 stop_event.set()
                 hb.join(timeout=0.5)
+                kind = "timeout" if isinstance(e, anthropic.APITimeoutError) else "connection error"
                 if attempt >= self.num_retries:
-                    raise LLMError(f"timeout after {self.num_retries + 1} attempts: {e}") from e
+                    raise LLMError(
+                        f"{kind} after {self.num_retries + 1} attempts: {e}"
+                    ) from e
                 wait = delay + random.uniform(0, 0.5)
-                print(f"[llm_client] timeout (attempt {attempt + 1}/{self.num_retries + 1}); "
+                print(f"[llm_client] {kind} (attempt {attempt + 1}/{self.num_retries + 1}); "
                       f"sleeping {wait:.1f}s then retrying", file=sys.stderr, flush=True)
                 time.sleep(wait)
                 delay = min(delay * 2, 30.0)
                 continue
-
-            stop_event.set()
-            hb.join(timeout=0.5)
-
-            if resp.status_code in (429, 529):
-                server_wait = _server_retry_delay(resp)
+            except anthropic.APIStatusError as e:
+                stop_event.set()
+                hb.join(timeout=0.5)
+                status = e.status_code
+                if status not in _RETRYABLE_STATUSES:
+                    raise LLMError(f"HTTP {status}: {_extract_error_body(e)[:500]}") from e
+                server_wait = _server_retry_delay(e.response)
                 if attempt >= self.num_retries:
                     hint = f"; server asked for {server_wait:.0f}s" if server_wait else ""
                     raise LLMRateLimitError(
-                        f"rate-limited (HTTP {resp.status_code}) after "
+                        f"rate-limited (HTTP {status}) after "
                         f"{self.num_retries + 1} attempts{hint}"
-                    )
+                    ) from e
                 wait_src = server_wait if server_wait is not None else max(delay, MIN_RATE_LIMIT_SLEEP_SEC)
                 wait = min(wait_src, MAX_RETRY_SLEEP_SEC) + random.uniform(0, 0.5)
                 origin = "server Retry-After" if server_wait is not None else "backoff-floored"
-                print(f"[llm_client] HTTP {resp.status_code} rate-limited "
+                print(f"[llm_client] HTTP {status} rate-limited "
                       f"(attempt {attempt + 1}/{self.num_retries + 1}); "
                       f"sleeping {wait:.1f}s ({origin}) then retrying",
                       file=sys.stderr, flush=True)
@@ -140,17 +149,45 @@ class LLMClient:
                 delay = min(delay * 2, MAX_RETRY_SLEEP_SEC)
                 continue
 
-            if resp.status_code >= 400:
-                raise LLMError(f"HTTP {resp.status_code}: {resp.text[:500]}")
-
-            return _parse_response(resp.json())
+            stop_event.set()
+            hb.join(timeout=0.5)
+            return _parse_response(_to_dict(msg))
 
         raise LLMError("unreachable retry loop")
 
 
+def _to_dict(msg: Any) -> dict[str, Any]:
+    """Normalize an SDK Message to the plain dict shape `_parse_response` expects."""
+    if isinstance(msg, dict):
+        return msg
+    dump = getattr(msg, "model_dump", None)
+    if callable(dump):
+        return dump()
+    return dict(msg)
+
+
+def _extract_error_body(err: Exception) -> str:
+    """Best-effort readable body from an SDK status error."""
+    resp = getattr(err, "response", None)
+    if resp is not None:
+        text = getattr(resp, "text", None)
+        if isinstance(text, str) and text:
+            return text
+    body = getattr(err, "body", None)
+    if body is not None:
+        try:
+            return json.dumps(body)
+        except (TypeError, ValueError):
+            return str(body)
+    return str(err)
+
+
 def _server_retry_delay(resp) -> float | None:
     """Seconds the server asked us to wait, from the Retry-After header or bridge body."""
-    raw = resp.headers.get("retry-after")
+    if resp is None:
+        return None
+    headers = getattr(resp, "headers", None) or {}
+    raw = headers.get("retry-after")
     if raw:
         try:
             return max(0.0, float(raw))
@@ -158,7 +195,7 @@ def _server_retry_delay(resp) -> float | None:
             pass
     try:
         payload = resp.json()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return None
     if not isinstance(payload, dict):
         return None

@@ -1,0 +1,69 @@
+schema_version = "1.4"
+
+artifacts = [
+  "/telemetry/run_record.jsonl",
+  "/telemetry/novelty",
+  "/workspace/submission/optimizer.py",
+  "/workspace/submission/logs",
+  "/logs/verifier/reward.json",
+]
+
+[task]
+name = "bia/track3nov"
+version = "1.0.0"
+description = "Derive a behaviorally novel optimizer that reaches 3.28 val loss on the frozen track-3 benchmark in fewest steps."
+authors = [{ name = "Bia" }]
+keywords = ["optimization", "bounded-continuous", "language-model"]
+
+[metadata]
+category = "optimization"
+# client RFP fields; not Harbor schema, carried in free-form [metadata]
+max_timout_hours = 24.0
+attempt_cap = 12          # measured: ~2.2h per graded attempt on 1xH100, NOT the doc's 100
+# The ceiling is a RANGE, not a point. Two oracle runs of the same ported record #46 cross
+# the n=2 significance bar (3.2771716) one eval point apart:
+#   track3nov__CMnwGuC  step 3150 -> 0.5833  (seed0 3.26907, seed1 3.27198, mean 3.27053)
+#   task__m8uhYPM       step 3175 -> 0.5417  (the copy preserved in runs/oracle_gate)
+# calibrated_ceiling records the better of the two so it stays an upper bound; both
+# observations are declared in solution/grounding.yaml under oracle.calibration.
+# The older value 0.792 ("crossed at step 3025") had NO supporting artifact on this host:
+# results/runlogs/oracle_full.log is a failed argparse run, and oracle_s0.log is the NATIVE
+# train_gpt_cwd_SOTA.py at 2900 steps on 1 seed (val_loss 3.27243) -- a different optimizer
+# path, horizon and seed count, explicitly flagged in the anchors file as NOT valid for the
+# track3-novelty steps-axis reward.
+calibrated_ceiling = 0.583
+calibrated_ceiling_low = 0.5417
+novelty_gating = false      # reported metric only
+
+[agent]
+timeout_sec = 28800.0   # 8h, and MUST equal what instruction.md promises the agent. Set to
+                       # 21600 (6h, client FAQ) and reverted: measured iteration 2 needs ~6.6h
+                       # and a 6h cap kills it mid-run with the chain bound to a superseded
+                       # optimizer -> reward 0. Change here => change instruction.md + rubrics.
+# Phase override: [environment] baseline stays public so agent-setup can npm-install
+# claude-code; the agent RUN then drops to allowlist. 172.17.0.1 = docker0 gateway
+# hosting the LLM proxy (ANTHROPIC_BASE_URL), so model calls stay unrestricted.
+# Phase override: [environment] baseline stays public so agent-setup can npm-install
+# claude-code; the agent RUN then drops to allowlist. 172.17.0.1 = docker0 gateway
+# hosting the LLM proxy (ANTHROPIC_BASE_URL), so model calls stay unrestricted.
+network_mode = "allowlist"
+allowed_hosts = ["172.17.0.1"]
+
+[verifier]
+timeout_sec = 5400.0      # grading only; novelty deferred off the critical path
+
+[environment]
+docker_image = "bia/track3nov:v2"  # v2 = v1 + node/npm preinstalled (harbor agent-setup timeout)
+gpus = 1
+gpu_types = ["H100"]
+cpus = 8
+memory_mb = 65536
+storage_mb = 40960
+network_mode = "public"   # baseline for setup only; [agent] overrides to allowlist for the run
+
+# The task REQUIRES the agent to invoke runner/run_track3.py, and that runner refuses to
+# start without TRACK3_CHAIN_KEY. The bundle's tier-1 comment ("the agent never holds it")
+# cannot hold in an agentic flow -- the agent IS the caller. Tier 3 still protects the
+# graded artifact: optworker.py refuses to run if the key is in its environment, so the
+# SUBMITTED optimizer can never read or forge the chain. Deviation declared.
+env = { TRACK3_CHAIN_KEY = "41f8d34e903ac1a13719c2318c935bfac2efc1b8e4edb0fa2da6a33c5ed6b7c4", TRACK3_TELEMETRY_DIR = "/telemetry" }

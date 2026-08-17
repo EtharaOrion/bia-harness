@@ -17,7 +17,8 @@ def test_build_harbor_cmd_minimal(tmp_path):
         tmp_path / "mounted", seed=0, jobs_dir=tmp_path / "jobs",
         llm_config=None, agent="nop", attempts=1, concurrent=1,
     )
-    assert cmd[:2] == ["harbor", "run"]
+    assert cmd[0].endswith("harbor")
+    assert cmd[1] == "run"
     assert "-a" in cmd and cmd[cmd.index("-a") + 1] == "nop"
     assert "-k" in cmd and cmd[cmd.index("-k") + 1] == "1"
     assert "-n" in cmd and cmd[cmd.index("-n") + 1] == "1"
@@ -121,3 +122,15 @@ def test_harbor_model_flag_strips_provider_prefix(tmp_path):
 def test_default_agent_is_a_real_harbor_agent():
     args = harness.parse_args(["--task", "nanogpt-smoke", "--backend", "dry"])
     assert args.agent == "claude-code"
+
+
+def test_resolve_harbor_bin_prefers_explicit_over_path(monkeypatch):
+    monkeypatch.setenv("HARBOR_BIN", "/custom/harbor")
+    assert harness.resolve_harbor_bin() == "/custom/harbor"
+
+
+def test_resolve_harbor_bin_avoids_bare_path_when_venv_present(monkeypatch):
+    """A bare 'harbor' hits a stale uv-tool install lacking gpus/allowlist support."""
+    monkeypatch.delenv("HARBOR_BIN", raising=False)
+    resolved = harness.resolve_harbor_bin()
+    assert resolved == "harbor" or resolved.endswith(".venv-harbor/bin/harbor")

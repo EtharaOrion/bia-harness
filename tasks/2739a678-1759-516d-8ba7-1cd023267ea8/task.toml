@@ -1,0 +1,59 @@
+schema_version = "1.4"
+
+artifacts = [
+  "/telemetry/run_record.jsonl",
+  "/telemetry/novelty",
+  "/workspace/submission/optimizer.py",
+  "/workspace/submission/logs",
+  "/logs/verifier/reward.json",
+]
+
+[task]
+name = "bia/track3nov"
+version = "1.0.0"
+description = "Derive a behaviorally novel optimizer that reaches 3.28 val loss on the frozen track-3 benchmark in fewest steps."
+authors = [{ name = "Bia" }]
+keywords = ["optimization", "bounded-continuous", "language-model"]
+
+[metadata]
+category = "optimization"
+# Reference fields, not Harbor schema; carried in free-form [metadata] and read by no code.
+attempt_cap = 12          # measured: ~2.2h per graded attempt on 1xH100
+# The ceiling is a RANGE, not a point. Two runs of the same ported record #46 cross the n=2
+# significance bar (3.2771716) one eval point apart: step 3150 -> 0.5833 and step 3175 ->
+# 0.5417. calibrated_ceiling records the better of the two so it remains an upper bound, and
+# calibrated_ceiling_low records the other so the spread is not lost. Both are measured on
+# this host under the frozen contract; neither is a published figure.
+calibrated_ceiling = 0.583
+calibrated_ceiling_low = 0.5417
+novelty_gating = false      # reported metric only
+
+[agent]
+timeout_sec = 28800.0  # 8h, and MUST equal what instruction.md promises the agent. Set to
+                       # 21600 (6h, client FAQ) and reverted: measured iteration 2 needs ~6.6h
+                       # and a 6h cap kills it mid-run with the chain bound to a superseded
+                       # optimizer -> reward 0. Change here => change instruction.md + rubrics.
+# Phase override: the [environment] baseline stays public so agent setup can install the
+# agent; the RUN then drops to allowlist. 172.17.0.1 is the docker0 gateway hosting the
+# model endpoint, so model calls stay unrestricted while general egress is dropped.
+network_mode = "allowlist"
+allowed_hosts = ["172.17.0.1"]
+
+[verifier]
+timeout_sec = 5400.0      # grading only; novelty deferred off the critical path
+
+[environment]
+docker_image = "bia/track3nov:v2"  # v2 = v1 + node/npm preinstalled (harbor agent-setup timeout)
+gpus = 1
+gpu_types = ["H100"]
+cpus = 8
+memory_mb = 65536
+storage_mb = 40960
+network_mode = "public"   # baseline for setup only; [agent] overrides to allowlist for the run
+
+# The task REQUIRES the agent to invoke runner/run_track3.py, and that runner refuses to
+# start without TRACK3_CHAIN_KEY. The bundle's tier-1 comment ("the agent never holds it")
+# cannot hold in an agentic flow -- the agent IS the caller. Tier 3 still protects the
+# graded artifact: optworker.py refuses to run if the key is in its environment, so the
+# SUBMITTED optimizer can never read or forge the chain. Deviation declared.
+env = { TRACK3_CHAIN_KEY = "41f8d34e903ac1a13719c2318c935bfac2efc1b8e4edb0fa2da6a33c5ed6b7c4", TRACK3_TELEMETRY_DIR = "/telemetry" }

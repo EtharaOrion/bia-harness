@@ -82,3 +82,62 @@ def test_mount_task_rejects_missing_variant(tmp_path):
     with pytest.raises(FileNotFoundError):
         mount_variant.mount_task(SPEEDRUN_TASK, tmp_path / "mounted",
                                  variant=tmp_path / "nope.py")
+
+
+def _bia_style_task(root: Path, artifacts: list[str], mount_toml: str | None = None) -> Path:
+    task = root / "bia-style"
+    (task / "tests").mkdir(parents=True)
+    rendered = ", ".join(f'"{a}"' for a in artifacts)
+    (task / "task.toml").write_text(
+        f'schema_version = "1.4"\nartifacts = [{rendered}]\n\n'
+        '[task]\nname = "bia/track3nov"\n'
+    )
+    if mount_toml is not None:
+        (task / "mount.toml").write_text(mount_toml)
+    return task
+
+
+def test_variant_dst_inferred_from_task_toml_artifacts(tmp_path):
+    task = _bia_style_task(tmp_path, [
+        "/telemetry/run_record.jsonl",
+        "/workspace/submission/optimizer.py",
+        "/workspace/submission/logs",
+        "/logs/verifier/reward.json",
+    ])
+    variant = tmp_path / "iter0.py"
+    variant.write_text("# inferred-dst sentinel\n")
+
+    out = mount_variant.mount_task(task, tmp_path / "mounted", variant=variant)
+
+    assert (out / "submission" / "optimizer.py").read_text() == "# inferred-dst sentinel\n"
+
+
+def test_inferred_dst_prefers_submission_over_other_py_artifacts(tmp_path):
+    task = _bia_style_task(tmp_path, [
+        "/workspace/tools/helper.py",
+        "/workspace/submission/optimizer.py",
+    ])
+    assert mount_variant._variant_dst_from_task_toml(task) == "submission/optimizer.py"
+
+
+def test_mount_toml_takes_precedence_over_task_toml_inference(tmp_path):
+    task = _bia_style_task(
+        tmp_path,
+        ["/workspace/submission/optimizer.py"],
+        mount_toml='version = "1.0"\n\n[variant]\ndst = "environment/explicit.py"\nrequired = false\n',
+    )
+    variant = tmp_path / "iter0.py"
+    variant.write_text("# precedence sentinel\n")
+
+    out = mount_variant.mount_task(task, tmp_path / "mounted", variant=variant)
+
+    assert (out / "environment" / "explicit.py").is_file()
+    assert not (out / "submission" / "optimizer.py").exists()
+
+
+def test_no_py_artifact_still_rejects_variant(tmp_path):
+    task = _bia_style_task(tmp_path, ["/logs/verifier/reward.json", "/workspace/submission/logs"])
+    variant = tmp_path / "iter0.py"
+    variant.write_text("pass\n")
+    with pytest.raises(ValueError, match="does not accept a --variant"):
+        mount_variant.mount_task(task, tmp_path / "mounted", variant=variant)
