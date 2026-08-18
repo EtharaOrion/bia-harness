@@ -1,0 +1,278 @@
+{
+    "converter_version": "1.0.0",
+    "generated_at": "2026-08-18T15:24:45Z",
+    "source_run_root": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147",
+    "task_uuid": "17d66d37-7b3f-57d3-93ad-0263fc495147",
+    "model_slug": "claude-opus-5",
+    "runs": [
+        {
+            "run": "run_1",
+            "source_job": "agentic_iter01",
+            "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF",
+            "source_result_sha256": "570157d8f2eb94fe114c5171de73018cd1a33b98fc47538733e6ab9c43e3ecb2",
+            "destination": "trajectories/claude-opus-5/run_1"
+        },
+        {
+            "run": "run_2",
+            "source_job": "agentic_iter02",
+            "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi",
+            "source_result_sha256": "494e6ff479396592a851f771623433a37be8acec6208f58d982dc7a915c41bb9",
+            "destination": "trajectories/claude-opus-5/run_2"
+        },
+        {
+            "run": "run_3",
+            "source_job": "agentic_iter03",
+            "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P",
+            "source_result_sha256": "ab949dbb223eac460f259e7cf8fb1586de0208d56dddf277df289ebd94072a95",
+            "destination": "trajectories/claude-opus-5/run_3"
+        },
+        {
+            "run": "run_4",
+            "source_job": "agentic_iter04",
+            "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter04/minicalc__LYfztqU",
+            "source_result_sha256": "bbb69bedf9dd7428aab46745d3ea1bfe2653d836993d27aad03feec198f8af8c",
+            "destination": "trajectories/claude-opus-5/run_4"
+        }
+    ],
+    "renamed": [
+        {
+            "run": "run_1",
+            "from": "verifier_result.rewards",
+            "to": "verifier_result.scores",
+            "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
+        },
+        {
+            "run": "run_1",
+            "from": "verifier_result.rewards.reward",
+            "to": "verifier_result.scores.score",
+            "reason": "the delivery format calls the graded value `score`, not `reward`"
+        },
+        {
+            "run": "run_1",
+            "from": "verifier/score.json:reward",
+            "to": "verifier/score.json:score",
+            "reason": "synthesised from the pre-rewiring verifier/reward.json, whose graded value is keyed `reward`"
+        },
+        {
+            "run": "run_2",
+            "from": "verifier_result.rewards",
+            "to": "verifier_result.scores",
+            "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
+        },
+        {
+            "run": "run_2",
+            "from": "verifier_result.rewards.reward",
+            "to": "verifier_result.scores.score",
+            "reason": "the delivery format calls the graded value `score`, not `reward`"
+        },
+        {
+            "run": "run_2",
+            "from": "verifier/score.json:reward",
+            "to": "verifier/score.json:score",
+            "reason": "synthesised from the pre-rewiring verifier/reward.json, whose graded value is keyed `reward`"
+        },
+        {
+            "run": "run_3",
+            "from": "verifier_result.rewards",
+            "to": "verifier_result.scores",
+            "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
+        },
+        {
+            "run": "run_3",
+            "from": "verifier_result.rewards.reward",
+            "to": "verifier_result.scores.score",
+            "reason": "the delivery format calls the graded value `score`, not `reward`"
+        },
+        {
+            "run": "run_3",
+            "from": "verifier/score.json:reward",
+            "to": "verifier/score.json:score",
+            "reason": "synthesised from the pre-rewiring verifier/reward.json, whose graded value is keyed `reward`"
+        },
+        {
+            "run": "run_4",
+            "from": "verifier_result.rewards",
+            "to": "verifier_result.scores",
+            "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
+        },
+        {
+            "run": "run_4",
+            "from": "verifier_result.rewards.reward",
+            "to": "verifier_result.scores.score",
+            "reason": "the delivery format calls the graded value `score`, not `reward`"
+        }
+    ],
+    "redacted": [
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_1/config.json",
+            "json_path": "agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_1/result.json",
+            "json_path": "config.agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_2/config.json",
+            "json_path": "agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_2/result.json",
+            "json_path": "config.agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_3/config.json",
+            "json_path": "agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_3/result.json",
+            "json_path": "config.agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_4/config.json",
+            "json_path": "agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "ANTHROPIC_API_KEY",
+            "file": "trajectories/claude-opus-5/run_4/result.json",
+            "json_path": "config.agent.env.ANTHROPIC_API_KEY",
+            "placeholder": "${ANTHROPIC_API_KEY}"
+        }
+    ],
+    "fallbacks": [
+        {
+            "run": "run_1",
+            "destination": "verifier/score.json",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/reward.json",
+            "synthesised": false
+        },
+        {
+            "run": "run_1",
+            "destination": "verifier/score.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/reward.json",
+            "synthesised": true
+        },
+        {
+            "run": "run_1",
+            "destination": "verifier/grade-stdout.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/grade-stdout.txt",
+            "synthesised": false
+        },
+        {
+            "run": "run_1",
+            "destination": "verifier/test-stdout.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/test-stdout.txt",
+            "synthesised": false
+        },
+        {
+            "run": "run_2",
+            "destination": "verifier/score.json",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/reward.json",
+            "synthesised": false
+        },
+        {
+            "run": "run_2",
+            "destination": "verifier/score.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/reward.json",
+            "synthesised": true
+        },
+        {
+            "run": "run_2",
+            "destination": "verifier/grade-stdout.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/grade-stdout.txt",
+            "synthesised": false
+        },
+        {
+            "run": "run_2",
+            "destination": "verifier/test-stdout.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/test-stdout.txt",
+            "synthesised": false
+        },
+        {
+            "run": "run_3",
+            "destination": "verifier/score.json",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/reward.json",
+            "synthesised": false
+        },
+        {
+            "run": "run_3",
+            "destination": "verifier/score.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/reward.json",
+            "synthesised": true
+        },
+        {
+            "run": "run_3",
+            "destination": "verifier/grade-stdout.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/grade-stdout.txt",
+            "synthesised": false
+        },
+        {
+            "run": "run_3",
+            "destination": "verifier/test-stdout.md",
+            "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/test-stdout.txt",
+            "synthesised": false
+        }
+    ],
+    "headers_added": [
+        {
+            "run": "run_1",
+            "destination": "verifier/test-stdout.md",
+            "timestamp_source": "result.json:finished_at",
+            "timestamp": "2026-08-18T11:19:51Z"
+        },
+        {
+            "run": "run_2",
+            "destination": "verifier/test-stdout.md",
+            "timestamp_source": "result.json:finished_at",
+            "timestamp": "2026-08-18T11:24:34Z"
+        },
+        {
+            "run": "run_3",
+            "destination": "verifier/test-stdout.md",
+            "timestamp_source": "result.json:finished_at",
+            "timestamp": "2026-08-18T11:32:34Z"
+        },
+        {
+            "run": "run_4",
+            "destination": "verifier/test-stdout.md",
+            "timestamp_source": "result.json:finished_at",
+            "timestamp": "2026-08-18T13:53:15Z"
+        }
+    ],
+    "dropped": [
+        "agent/claude-code.txt",
+        "agent/sessions/",
+        "agent/setup/",
+        "artifacts/manifest.json",
+        "artifacts/logs/",
+        "artifacts/workspace/ (the optimizer is flattened out of this nesting)",
+        "artifacts/workspace/submission/logs/",
+        "lock.json",
+        "trial.log",
+        "<job>/config.json",
+        "<job>/lock.json",
+        "<job>/result.json",
+        "<job>/job.log",
+        "<run_root>/ledger.jsonl",
+        "<run_root>/.cfg_iterNN.json",
+        "<run_root>/.lock",
+        "<run_root>/history/iterNN_facts.json"
+    ],
+    "not_produced": [
+        "run_N/rubric_verdicts.json: the LLM judge (runner/agentloop/judge.py) is unwired in this harness, so the campaign produced no rubric verdicts to convert"
+    ],
+    "skipped": []
+}

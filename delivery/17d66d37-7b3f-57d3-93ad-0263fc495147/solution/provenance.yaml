@@ -1,0 +1,104 @@
+schema: track3.contamination_screening/v1
+bundle_family: minicalc_synthetic_quadratic
+
+recorded_because: >-
+  A recipient of this bundle cannot otherwise tell what the task was screened against, by what
+  method, or when. This carrier answers that from the bytes alone. It is written only because the
+  screening described below was actually performed; a carrier describing screening that did not
+  happen would be a worse defect than its absence, since it converts a visible gap into an
+  invisible false claim. Most of the screening family this schema was built for does not apply
+  here and is declared absent below rather than described as done.
+
+attestation:
+  type: producer_self_attestation
+  attested_on: 2026-08-18
+  signature: absent
+  signature_required: true
+  signature_note: >-
+    This record is unsigned and rests on the producer's word. Sign this carrier's own sha256
+    rather than the bundle uuid: solution/ is inside the bundle, so a signature over the uuid
+    would change the uuid it signs.
+
+screening_roots:
+  - id: shipped_reference_implementation
+    path: solution/optimizer.py
+    sha256: 27f446bb5145abe9a8f2b0101f642b75c47fde0721106566664ea99375015ad3
+    rationale: >-
+      The L-BFGS reference the task's difficulty is calibrated from, at graded_step 2672. It is
+      the implementation a submission is most likely to reproduce, because it is the one the
+      target was measured against.
+
+  - id: objective_source
+    path: environment/runner/train_mini.py
+    sha256: 697763a79c4193b12b8292dcd005a04cc30400c85308e399b4619adfaa433385
+    rationale: >-
+      Holds the objective and is readable from inside the container by design. It is the
+      contamination surface for frozen-contract rule 4: a submission that reads it could
+      analytically invert the minimiser instead of optimising toward it.
+
+corpus:
+  shipped: false
+  reason: >-
+    There is no published-record corpus for this task and none is claimed. The objective is
+    generated at run time from random.Random(9781 + seed) in the trainer above, so no instance of
+    it exists in any public source and there is nothing for a model to have memorised. The general
+    method that solves it - quasi-Newton curvature estimation - is universally published, but that
+    is the task's intended solution space, not contamination.
+
+methods:
+  - id: minimiser_reconstruction_review
+    implemented_by: producer, manually, by reading each submitted optimizer
+    inspectable_from_this_bundle: true
+    measures: >-
+      Whether a submission hardcodes, precomputes or analytically inverts the objective's
+      minimiser, which frozen-contract rule 4 in instruction.md declares void. Each recorded
+      submission was read at trajectories/<model>/run_N/artifacts/optimizer.py and checked for a
+      literal minimiser, for reading the seed, and for reconstructing the objective's parameters
+      rather than estimating curvature from observed gradients.
+    executed_by: producer, out of band
+    note: >-
+      grade.py does not implement this check. Rule 4 is stated in instruction.md and enforced only
+      by this manual review, so it did not run on the graded path and a recipient cannot
+      re-execute it from these bytes. They can re-read the submissions, which do ship.
+
+  - id: behavioural_novelty_gate
+    shipped: false
+    reason: >-
+      Not implemented for this task. It requires a corpus to diverge against and there is none.
+
+  - id: source_level_verbatim_copy_screen
+    shipped: false
+    reason: >-
+      Not implemented for this task. Its only screening root would be the reference above, and a
+      submission matching it would score at most the reference's own 2672 steps, so a copy is
+      visible in the score rather than needing a separate screen.
+
+  - id: process_rubric_judgement
+    shipped: false
+    reason: >-
+      The trajectory judge is deliberately unwired for this bundle, so no rubric_verdicts.json is
+      produced and score.json carries no rubrics_* keys. No rubric claim is made anywhere in this
+      bundle.
+
+outcome:
+  contamination_detected: false
+  statement: >-
+    The three recorded submissions were read against the roots above. None hardcodes or inverts
+    the minimiser, reads the seed, or reproduces the reference. Each estimates curvature from
+    gradients it observed at run time, which is the intended solution space. The best recorded run
+    reached graded_step 2653, ahead of the reference's 2672.
+  scope_limit: >-
+    This outcome covers the three runs recorded under trajectories/ in this bundle and rests on a
+    manual read, not on an executed gate. It is not a claim about submissions this bundle has not
+    seen: nothing in the shipped verifier screens a future submission, so a rule 4 violation would
+    be scored as a legitimate result rather than voided.
+
+age_origin:
+  roots_frozen_at: >-
+    The two digests above are the state screened. Any change to the reference or the trainer
+    invalidates this record, because the roots would no longer be the ones measured.
+  revalidate_when: >-
+    Whichever comes first: either root digest ceases to match the shipped bytes, or the review
+    interval below elapses.
+  review_interval_days: 180
+  recorded_runs_graded_on: 2026-08-18

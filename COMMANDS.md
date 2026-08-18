@@ -69,31 +69,36 @@ been run with a real LLM agent end to end.
 
 ## Package a delivery bundle
 
-Converts one agentloop campaign into the client delivery format: the task bundle at
-the root, plus `trajectories/<model-slug>/run_N/` per iteration.
+Converts one agentloop campaign into the client delivery format. The bundle is written
+to `<out>/<task-uuid>/`: the task bundle at the bundle root, plus
+`trajectories/<model-slug>/run_N/` per iteration. One `--out` therefore holds many
+tasks, one directory per uuid.
 
 ```bash
 # convert a finished campaign (run_N ordered by agentic_iterNN)
 python tools/package_delivery.py \
   --run-root runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147 \
-  --out /tmp/delivery
+  --out delivery
 
 # plan and audit without writing a byte
-python tools/package_delivery.py --run-root <run-root> --out /tmp/delivery --dry-run
+python tools/package_delivery.py --run-root <run-root> --out delivery --dry-run
 
 # overwrite a previous conversion (only converter-managed entries are removed)
-python tools/package_delivery.py --run-root <run-root> --out /tmp/delivery --force
+python tools/package_delivery.py --run-root <run-root> --out delivery --force
 ```
+
+`--force` clears only the bundle for the task being converted, so re-cutting one task
+never touches a sibling task's bundle under the same `--out`.
 
 Per run it emits `agent/trajectory.json`, `agent/history.md` (absent for iteration 1,
 which has no prior history), `artifacts/optimizer.py`, `config.json` pruned to the seven
 delivery keys, `result.json`, and `verifier/{grade-stdout.md,score.json,score.md,test-stdout.md}`.
 
-`manifest.json` at the delivery root records every rename, redaction, dropped file,
+`manifest.json` at the bundle root records every rename, redaction, dropped file,
 fallback and added header. Check it after each conversion:
 
 ```bash
-python -c "import json;m=json.load(open('/tmp/delivery/manifest.json'));\
+python -c "import json;m=json.load(open('delivery/<task-uuid>/manifest.json'));\
 print({k:len(v) for k,v in m.items() if isinstance(v,list)})"
 ```
 
@@ -173,12 +178,12 @@ pytest tests/
 pytest legacy/harness2/tests
 ```
 
-At the time of writing: `pytest` gives `2 failed, 640 passed, 10 skipped`;
-`pytest tests/` gives `437 passed, 2 skipped`; `pytest legacy/harness2/tests` gives
-`2 failed, 203 passed, 8 skipped`. The two failures are both
-`legacy/harness2/tests/test_task_toml.py::test_task_toml_parses` against the two
-`bia/track3nov` bundles, which declare `schema_version = "1.4"` where that test asserts
-`version = "1.0"`. They are pre-existing and have nothing to do with the restructure.
+At the time of writing: `pytest` gives `3 failed, 761 passed, 13 skipped`;
+`pytest tests/` gives `557 passed, 2 skipped`; `pytest legacy/harness2/tests` gives
+`3 failed, 204 passed, 11 skipped`. The three failures are all
+`legacy/harness2/tests/test_task_toml.py::test_task_toml_parses`, against the two
+`bia/track3nov` bundles and `minicalc`, which declare `schema_version = "1.4"` where that
+test asserts `version = "1.0"`. They are pre-existing and unrelated to the pipeline.
 
 The suite covers task grading, dry-run orchestration, ledger ingestion, mount
 validation, task schemas, LLM client behavior, RFP/CLI alignment, and the whole

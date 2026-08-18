@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "/home/bia-gpu/oer/bia/harness/tasks/minicalc"
+    },
+    "trial_name": "minicalc__HgPZTBi",
+    "trials_dir": "/home/bia-gpu/oer/bia/harness/runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02",
+    "agent_setup_timeout_multiplier": 5.0,
+    "agent": {
+        "name": "claude-code",
+        "model_name": "claude-opus-5",
+        "env": {
+            "ANTHROPIC_BASE_URL": "http://172.17.0.1:8765",
+            "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
+        }
+    },
+    "extra_instruction_paths": [
+        "/home/bia-gpu/oer/bia/harness/runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/history/iter02_history.md"
+    ],
+    "job_id": "6d2ce86c-18b4-42bb-aad5-961a7efbbc93"
+}

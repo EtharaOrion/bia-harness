@@ -173,8 +173,11 @@ the task image); otherwise it skips, because one iteration starts a GPU containe
 Runs after a campaign, never during one. Reads `runs/agentloop/<uuid>/`, writes a
 delivery bundle; the source campaign is not modified.
 
+The bundle lands at `<out>/<task-uuid>/`, keyed by uuid so one delivery root holds many
+tasks and `--force` scopes to a single task's bundle.
+
 ```
-runs/agentloop/<uuid>/jobs/agentic_iterNN/<trial>/   ->  trajectories/<model-slug>/run_N/
+runs/agentloop/<uuid>/jobs/agentic_iterNN/<trial>/   ->  <out>/<uuid>/trajectories/<model-slug>/run_N/
 ```
 
 `run_N` follows the `agentic_iterNN` number, so run numbering matches iteration

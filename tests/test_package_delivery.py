@@ -204,12 +204,27 @@ def rel_files(root):
     return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
 
 
+def convert_bundle(run_root, root, **kw):
+    """convert() and return the bundle dir, which is nested under the task uuid.
+
+    Tests assert on bundle contents, so returning the delivery root instead
+    would put every path one level too high.
+    """
+    pd.convert(run_root, root, **kw)
+    return Path(root) / Path(run_root).name
+
+
 @pytest.fixture
 def converted(tmp_path):
+    """The `out` slot is this task's bundle dir, not the delivery root.
+
+    convert() nests under the task uuid so one root holds many tasks, so the
+    bundle -- not its parent -- is what assertions about bundle contents mean.
+    """
     run_root, task_dir, trial_ids = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    manifest = pd.convert(run_root, out)
-    return run_root, task_dir, trial_ids, out, manifest
+    root = tmp_path / "delivery"
+    manifest = pd.convert(run_root, root)
+    return run_root, task_dir, trial_ids, root / run_root.name, manifest
 
 
 # --------------------------------------------------------------------------
@@ -231,8 +246,8 @@ def test_iter_to_run_mapping(converted):
 def test_model_slug_is_derived_not_hardcoded(tmp_path):
     """The slug comes from result.json agent_info.model_info.name."""
     run_root, _, _ = build_run_root(tmp_path, n_iters=1, model_name="Claude Opus 4.5 (preview)")
-    out = tmp_path / "delivery"
-    manifest = pd.convert(run_root, out)
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    out = tmp_path / "delivery" / run_root.name
     assert manifest["model_slug"] == "claude-opus-4-5-preview"
     assert (out / "trajectories" / "claude-opus-4-5-preview" / "run_1").is_dir()
 
@@ -416,8 +431,9 @@ def test_rewards_normalized_to_scores_and_recorded(converted):
 def test_scores_source_is_left_alone(tmp_path):
     """A trial already speaking `scores` must not be renamed, and nothing recorded."""
     run_root, _, _ = build_run_root(tmp_path, n_iters=1, verifier_style="md")
-    manifest = pd.convert(run_root, tmp_path / "delivery")
-    res = json.loads((tmp_path / "delivery" / "trajectories" / "claude-opus-5" /
+    out = convert_bundle(run_root, tmp_path / "delivery")
+    manifest = json.loads((out / "manifest.json").read_text())
+    res = json.loads((out / "trajectories" / "claude-opus-5" /
                       "run_1" / "result.json").read_text())
     assert "scores" in res["verifier_result"]
     assert not [r for r in manifest["renamed"] if "verifier_result" in r["from"]]
@@ -445,8 +461,8 @@ def test_source_result_checksum_recorded(converted):
 
 def test_md_style_verifier_copied_verbatim(tmp_path):
     run_root, _, _ = build_run_root(tmp_path, n_iters=1, verifier_style="md")
-    out = tmp_path / "delivery"
-    manifest = pd.convert(run_root, out)
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    out = tmp_path / "delivery" / run_root.name
     v = out / "trajectories" / "claude-opus-5" / "run_1" / "verifier"
     assert rel_files(v) == ["grade-stdout.md", "score.json", "score.md", "test-stdout.md"]
     assert json.loads((v / "score.json").read_text())["score"] == pytest.approx(0.9)
@@ -516,42 +532,69 @@ def test_manifest_run_rows_map_source_to_destination(converted):
 
 def test_idempotent(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    root = tmp_path / "delivery"
+    out = convert_bundle(run_root, root)
     first = tree_checksum(out)
     files_first = rel_files(out)
-    pd.convert(run_root, out, force=True)
+    pd.convert(run_root, root, force=True)
     assert tree_checksum(out) == first
     assert rel_files(out) == files_first
 
 
 def test_stale_files_removed_on_reconvert(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    root = tmp_path / "delivery"
+    out = convert_bundle(run_root, root)
     junk = out / "trajectories" / "claude-opus-5" / "run_9" / "leftover.txt"
     junk.parent.mkdir(parents=True)
     junk.write_text("stale")
-    pd.convert(run_root, out, force=True)
+    pd.convert(run_root, root, force=True)
     assert not junk.exists()
 
 
-def test_refuses_to_clobber_non_empty_out(tmp_path):
+def test_refuses_to_clobber_a_non_empty_bundle(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    out.mkdir()
-    (out / "existing.txt").write_text("keep me")
+    root = tmp_path / "delivery"
+    bundle = root / run_root.name
+    bundle.mkdir(parents=True)
+    (bundle / "existing.txt").write_text("keep me")
     with pytest.raises(pd.DeliveryError) as e:
-        pd.convert(run_root, out)
+        pd.convert(run_root, root)
     assert "--force" in str(e.value)
 
 
-def test_empty_out_dir_is_not_a_clobber(tmp_path):
+def test_a_sibling_task_bundle_does_not_block(tmp_path):
+    """The delivery root is shared, so another task's bundle is not a clobber."""
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    out.mkdir()
-    pd.convert(run_root, out)
+    root = tmp_path / "delivery"
+    sibling = root / "99999999-0000-0000-0000-000000000000"
+    sibling.mkdir(parents=True)
+    (sibling / "manifest.json").write_text('{"task_uuid": "other"}')
+    out = convert_bundle(run_root, root)
     assert (out / "manifest.json").is_file()
+    assert (sibling / "manifest.json").read_text() == '{"task_uuid": "other"}'
+
+
+def test_force_on_one_task_leaves_a_sibling_intact(tmp_path):
+    """--force clears this task's bundle only; a sibling's files survive."""
+    run_root, _, _ = build_run_root(tmp_path)
+    root = tmp_path / "delivery"
+    out = convert_bundle(run_root, root)
+    sibling = root / "99999999-0000-0000-0000-000000000000"
+    (sibling / "trajectories").mkdir(parents=True)
+    (sibling / "manifest.json").write_text('{"task_uuid": "other"}')
+    pd.convert(run_root, root, force=True)
+    assert (out / "manifest.json").is_file()
+    assert (sibling / "manifest.json").is_file()
+    assert (sibling / "trajectories").is_dir()
+
+
+def test_empty_bundle_dir_is_not_a_clobber(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path)
+    root = tmp_path / "delivery"
+    (root / run_root.name).mkdir(parents=True)
+    pd.convert(run_root, root)
+    assert (root / run_root.name / "manifest.json").is_file()
 
 
 def test_dry_run_writes_nothing(tmp_path):
@@ -596,7 +639,7 @@ def test_cli_converts(tmp_path):
     out = tmp_path / "delivery"
     r = _cli("--run-root", run_root, "--out", out)
     assert r.returncode == 0, r.stderr
-    assert (out / "manifest.json").is_file()
+    assert (out / run_root.name / "manifest.json").is_file()
     assert "run_3" in r.stdout
 
 
@@ -611,8 +654,9 @@ def test_cli_dry_run_writes_nothing(tmp_path):
 def test_cli_force_required(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
     out = tmp_path / "delivery"
-    out.mkdir()
-    (out / "x.txt").write_text("x")
+    bundle = out / run_root.name
+    bundle.mkdir(parents=True)
+    (bundle / "x.txt").write_text("x")
     r = _cli("--run-root", run_root, "--out", out)
     assert r.returncode != 0
     assert "--force" in r.stderr
@@ -648,8 +692,8 @@ def _campaign_is_running(run_root=None):
 @pytest.mark.skipif(not REAL_RUN_ROOT.is_dir(), reason="real campaign not present")
 @pytest.mark.skipif(_campaign_is_running(), reason="a campaign is running against the real run root")
 def test_real_campaign_converts(tmp_path):
-    out = tmp_path / "delivery"
-    manifest = pd.convert(REAL_RUN_ROOT, out)
+    manifest = pd.convert(REAL_RUN_ROOT, tmp_path / "delivery")
+    out = tmp_path / "delivery" / REAL_RUN_ROOT.name
     assert manifest["model_slug"] == "claude-opus-5"
     # Asserted as invariants, not as a snapshot: the campaign grows by one run
     # every time an iteration is added, and a size-pinned test would fail for
@@ -681,8 +725,7 @@ def test_real_campaign_converts(tmp_path):
 @pytest.mark.skipif(not REAL_RUN_ROOT.is_dir(), reason="real campaign not present")
 @pytest.mark.skipif(_campaign_is_running(), reason="a campaign is running against the real run root")
 def test_real_campaign_has_no_secret_in_output(tmp_path):
-    out = tmp_path / "delivery"
-    pd.convert(REAL_RUN_ROOT, out)
+    out = convert_bundle(REAL_RUN_ROOT, tmp_path / "delivery")
     leaked = []
     for path in Path(out).rglob("*"):
         if path.is_file():
@@ -712,8 +755,7 @@ def _stdout_md(out, run="run_1"):
 
 def test_test_stdout_gets_a_two_line_provenance_header(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     lines = _stdout_md(out).split("\n")
     assert lines[0].startswith("# pytest ")
     assert lines[1].startswith("# ")
@@ -722,8 +764,7 @@ def test_test_stdout_gets_a_two_line_provenance_header(tmp_path):
 
 def test_header_names_the_destination_relpath(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     for n in (1, 2, 3):
         first = _stdout_md(out, f"run_{n}").split("\n")[0]
         assert f"  target: trajectories/claude-opus-5/run_{n}" in first
@@ -731,8 +772,7 @@ def test_header_names_the_destination_relpath(tmp_path):
 
 def test_header_timestamp_is_the_trials_finish_time_not_the_wall_clock(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     # fixture finished_at for run_1 is 2026-08-18T11:30:45.123456Z
     assert _stdout_md(out, "run_1").startswith("# pytest 2026-08-18T11:30:45Z  target: ")
     assert _stdout_md(out, "run_2").startswith("# pytest 2026-08-18T12:30:45Z  target: ")
@@ -740,8 +780,7 @@ def test_header_timestamp_is_the_trials_finish_time_not_the_wall_clock(tmp_path)
 
 def test_header_survives_reconvert_without_doubling(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     first = _stdout_md(out)
     pd.convert(run_root, out, force=True)
     assert _stdout_md(out) == first
@@ -754,8 +793,7 @@ def test_header_not_added_when_source_already_carries_one(tmp_path):
     (trial / "verifier" / "test-stdout.txt").write_text(
         "# pytest 2020-01-01T00:00:00Z  target: trajectories/x/run_1\n"
         "# already carried\n\nbody\n")
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     body = _stdout_md(out)
     assert body.count("  target: ") == 1
     assert body.startswith("# pytest 2020-01-01T00:00:00Z")
@@ -767,8 +805,7 @@ def test_header_says_pytest_was_unavailable_when_it_did_not_run(tmp_path):
     (trial / "verifier" / "test-stdout.txt").write_text(
         "pytest not available in this image; SKIPPED\n"
         "Nothing was asserted here -- do not read this as assertions passing.\n")
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     second = _stdout_md(out).split("\n")[1]
     assert "pytest unavailable" in second
     assert "sole verifier" in second
@@ -781,8 +818,7 @@ def test_header_credits_pytest_when_a_summary_line_is_present(tmp_path):
         "============================= test session starts ====================\n"
         "collected 17 items\n"
         "======================== 16 passed, 1 failed in 0.4s =================\n")
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     second = _stdout_md(out).split("\n")[1]
     assert "outcomes emitted by grade.py" in second
     assert "pytest unavailable" not in second
@@ -790,8 +826,7 @@ def test_header_credits_pytest_when_a_summary_line_is_present(tmp_path):
 
 def test_grade_stdout_is_delivered_without_a_header(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     grade = (out / "trajectories" / "claude-opus-5" / "run_1"
              / "verifier" / "grade-stdout.md").read_text()
     assert not grade.startswith("# pytest ")
@@ -802,15 +837,14 @@ def test_original_transcript_is_preserved_below_the_header(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
     trial = run_root / "jobs" / "agentic_iter01" / "minicalc__TRIAL01"
     original = (trial / "verifier" / "test-stdout.txt").read_text()
-    out = tmp_path / "delivery"
-    pd.convert(run_root, out)
+    out = convert_bundle(run_root, tmp_path / "delivery")
     assert _stdout_md(out).endswith(original)
 
 
 def test_manifest_records_every_header_added(tmp_path):
     run_root, _, _ = build_run_root(tmp_path)
-    out = tmp_path / "delivery"
-    manifest = pd.convert(run_root, out)
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    out = tmp_path / "delivery" / run_root.name
     added = manifest["headers_added"]
     assert [h["run"] for h in added] == ["run_1", "run_2", "run_3"]
     assert {h["destination"] for h in added} == {"verifier/test-stdout.md"}
@@ -835,8 +869,8 @@ def test_iteration_that_submitted_nothing_is_skipped_not_fatal(tmp_path):
     trial = run_root / "jobs" / "agentic_iter02" / "minicalc__TRIAL02"
     shutil.rmtree(trial / "artifacts")
     (trial / "artifacts").mkdir()
-    out = tmp_path / "delivery"
-    manifest = pd.convert(run_root, out)
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    out = tmp_path / "delivery" / run_root.name
     assert [r["run"] for r in manifest["runs"]] == ["run_1", "run_3"]
     assert not (out / "trajectories" / "claude-opus-5" / "run_2").exists()
 

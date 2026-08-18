@@ -299,14 +299,14 @@ As of this writing:
 
 | command | result |
 |---|---|
-| `pytest` | 2 failed, 640 passed, 10 skipped |
-| `pytest tests/` | 437 passed, 2 skipped |
-| `pytest legacy/harness2/tests` | 2 failed, 203 passed, 8 skipped |
+| `pytest` | 3 failed, 761 passed, 13 skipped |
+| `pytest tests/` | 557 passed, 2 skipped |
+| `pytest legacy/harness2/tests` | 3 failed, 204 passed, 11 skipped |
 
-Both failures are `test_task_toml_parses` for the two `bia/track3nov` bundles, whose
-`task.toml` declares `schema_version = "1.4"` while that test asserts `version = "1.0"`.
-They are pre-existing and unrelated to the restructure; they are a stale assertion about
-a newer Harbor schema, not a broken task.
+All three failures are `test_task_toml_parses`, for the two `bia/track3nov` bundles and
+`minicalc`, whose `task.toml` declares `schema_version = "1.4"` while that test asserts
+`version = "1.0"`. They are pre-existing and unrelated to the pipeline; they are a stale
+assertion about a newer Harbor schema, not a broken task.
 
 ```bash
 # Task 1 with variant swap (any .py works; this one is a real prior candidate)
@@ -343,11 +343,13 @@ which defaults to 2. `--llm-retries R`, default 3, applies only to planner LLM
 format. See COMMANDS.md for flags and FLOW.md for the per-file transform table.
 
 ```bash
-python tools/package_delivery.py --run-root runs/agentloop/<uuid> --out /tmp/delivery
+python tools/package_delivery.py --run-root runs/agentloop/<uuid> --out delivery
 ```
 
-The delivery carries the task bundle at its root and one `run_N` per iteration. Two
-bundle-side files exist for that format rather than for the loop:
+The bundle is written to `<out>/<task-uuid>/`, so one delivery root holds many tasks and
+`--force` on one leaves the others untouched. Each bundle carries the task bundle at its
+root and one `run_N` per iteration. Two bundle-side files exist for that format rather
+than for the loop:
 
 - `tasks/<task>/tests/emit_verifier_artifacts.py` writes `verifier/score.json`
   (numeric-only, the reason carried as an integer `reason_code`) and appends the full

@@ -26,7 +26,7 @@ flowchart TD
   INST --> BSP
   PSMD --> BUM([build_user_message_from_run])
   PVAR --> BUM
-  BSP --> LLM([llm_client.messages<br/>httpx POST /v1/messages])
+  BSP --> LLM([llm_client.messages<br/>Anthropic SDK client.messages.create])
   BUM --> LLM
   LLM -->|LLMResponse<br/>text_blocks + tool_uses| TL([turn loop MAX_TURNS_PER_ITER=4])
   TL -->|write_variant tool_use| VS([variant snapshot])
@@ -97,7 +97,7 @@ flowchart TD
 |-------|---------|----------|-----------|
 | **0. entry** | `runner.harness.main` -> `orchestrator.run_loop` | CLI args, `.llm_config/claude-code.json` | (in-memory state) |
 | **1a. planner input build** | `build_system_prompt` + `build_user_message_from_run` | `AGENTS.md`, `instruction.md`, `runN/plan.md`, `runN/goal.md` (frozen), prior `runN-1/summary.md`, prior `runN-1/variant.py` | in-memory system+user prompts |
-| **1b. planner LLM call** | `llm_client.messages` raw httpx POST to `<base_url>/v1/messages` | system + user prompts | `LLMResponse(text_blocks, tool_uses, stop_reason, raw)` + `planner/trajectory.jsonl` (user + assistant + tool_results turns) |
+| **1b. planner LLM call** | `llm_client.messages` via the Anthropic SDK, pointed at `<base_url>` | system + user prompts | `LLMResponse(text_blocks, tool_uses, stop_reason, raw)` + `planner/trajectory.jsonl` (user + assistant + tool_results turns) |
 | **1c. variant persist** | tool_use dispatch (write_variant / spawn_subagent / update_plan_section / append_thread / add_ruled_down) | `LLMResponse.tool_uses` | `runN/variant.py`, `policy/runN/variants/iterN.py`, `runN/diff/variant.patch` (unified diff vs runN-1) |
 | **1d. dispatch per seed** | `mount_task` + `dispatch_{dry\|local\|harbor}` | `runN/variant.py`, task tree | per-seed: `seed_S/log`, `seed_S/trajectory.json` (dry only), `seed_S/harbor_trial/{config.json, result.json, trajectory.json, agent/, verifier/}` (harbor only) |
 | **2. task grader** | `_grade` subprocess `tests/grader.py` | `seed_S/log` | `seed_S/reward.json` (task_reward, hit_target, step_to_3_28) |

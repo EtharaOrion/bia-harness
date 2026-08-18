@@ -1,0 +1,63 @@
+schema_version = "1.4"
+
+# Same convention as the two bia/track3nov bundles, and for the same reason: harbor
+# 0.21's TaskConfig field IS `schema_version`, and its back-compat validator maps a
+# top-level `version` onto it. Declaring `version = "1.0"` to satisfy
+# legacy/harness2/tests/test_task_toml.py would mean telling harbor this bundle is
+# schema 1.0 while it uses 1.4 features (`artifacts`, phase `network_mode`). That
+# test is a stale assertion about an older schema; see TRUTH.md.
+
+artifacts = [
+  "/workspace/submission/optimizer.py",
+  "/workspace/submission/logs",
+  "/logs/verifier/reward.json",
+]
+
+[task]
+name = "bia/minicalc"
+# Read by runner/harness.py::resolve_task_uuid, which otherwise falls back to a slug
+# of [task].name. The uuid is what names runs/agentloop/<slug>/, so pinning it keeps
+# a campaign's run root stable if the task is ever renamed.
+uuid = "17d66d37-7b3f-57d3-93ad-0263fc495147"
+version = "1.0.0"
+description = "Write an optimizer that reaches 3.28 on a frozen rotated quadratic in fewest steps. CPU-only miniature of bia/track3nov, for end-to-end agentloop validation."
+authors = [{ name = "Bia" }]
+keywords = ["optimization", "bounded-continuous", "cpu", "smoke"]
+
+[metadata]
+category = "optimization"
+# Reference fields, not Harbor schema; carried in free-form [metadata], read by no code.
+mirrors = "bia/track3nov"
+# Why the reward constants are IDENTICAL to bia/track3nov's rather than natural to
+# this problem: runner/agentloop/trial_io.py:87 calls reward_from_curve(curve) with
+# no task-derived constants, so the loop scores EVERY task with reward.py's module
+# defaults (3500 / 2900 / 3.28). A miniature whose curve lived on any other scale
+# would be scored 1.0 every iteration and would validate nothing. The objective is
+# calibrated so its curve crosses 3.28 inside that window. See TRUTH.md.
+measured_reference_step = 2672   # solution/optimizer.py, worst of seeds 0 and 1
+measured_naive_gd_step = 3318    # plain fixed-step gradient descent, best lr
+measured_runtime_sec = 0.7       # full 2-seed graded run, this host, CPU
+
+[agent]
+timeout_sec = 1800.0   # 30 min, and MUST equal what instruction.md promises the agent.
+                       # A full 2-seed graded run costs ~1s, so this is thinking time,
+                       # not compute time. Change here => change instruction.md.
+# Same phase override as bia/track3nov: [environment] stays public so agent setup can
+# run, then the RUN drops to allowlist. 172.17.0.1 is the docker0 gateway hosting the
+# model endpoint, so model calls stay unrestricted while general egress is dropped.
+network_mode = "allowlist"
+allowed_hosts = ["172.17.0.1"]
+
+[verifier]
+timeout_sec = 300.0
+# No [verifier.environment]: environment_mode then defaults to 'shared', so the
+# verifier runs in the agent's container. grade.py is stdlib-only, so there is
+# nothing to install and no second image to keep in sync.
+
+[environment]
+docker_image = "bia/minicalc:v1"
+gpus = 0
+cpus = 2
+memory_mb = 4096
+storage_mb = 8192
+network_mode = "public"   # baseline for setup only; [agent] overrides to allowlist

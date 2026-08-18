@@ -8,7 +8,7 @@ Source (read only):
 
 Destination:
 
-    <out>/
+    <out>/<task-uuid>/
         task.toml  instruction.md  environment/  solution/  tests/
         manifest.json
         trajectories/<model-slug>/run_N/
@@ -569,9 +569,11 @@ def _task_dir(trial):
 def _prepare_out(out_dir, force):
     """Clear what this converter owns, refusing to clobber anything else.
 
-    Only `MANAGED_ENTRIES` are removed, so a reconvert drops stale runs without
-    touching a file an operator added. A non-empty destination still needs
-    `--force`, because the caller may have meant a different directory.
+    `out_dir` is one task's bundle, not the delivery root, so a sibling task's
+    bundle is never in scope. Within it only `MANAGED_ENTRIES` are removed, so a
+    reconvert drops stale runs without touching a file an operator added. A
+    non-empty bundle still needs `--force`, because the caller may have meant a
+    different directory.
     """
     if out_dir.exists():
         if any(out_dir.iterdir()) and not force:
@@ -620,7 +622,9 @@ def convert(run_root, out, force=False, dry_run=False):
     planning leaves no half-written delivery.
     """
     run_root = Path(run_root)
-    out_dir = Path(out)
+    # Keyed by task uuid so one delivery root holds many tasks, and --force
+    # clears only this task's bundle rather than a sibling's.
+    out_dir = Path(out) / run_root.name
 
     if not run_root.is_dir():
         raise DeliveryError(f"run root does not exist: {run_root}")
@@ -704,7 +708,7 @@ def convert(run_root, out, force=False, dry_run=False):
 # --------------------------------------------------------------------------
 
 def _report(manifest, dry_run):
-    print(f"{manifest['task_uuid']} -> trajectories/{manifest['model_slug']}/"
+    print(f"{manifest['task_uuid']}/trajectories/{manifest['model_slug']}/"
           f" ({len(manifest['runs'])} runs)"
           + ("  [dry run, nothing written]" if dry_run else ""))
     by_run = {}
