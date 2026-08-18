@@ -1,6 +1,8 @@
 # Data-Flow Diagram — one attempt end-to-end
 
-Covers the 7-stage feedback loop implemented by `runner/orchestrator.run_loop` per SPEC_AUDIT §7.
+Covers the 7-stage feedback loop implemented by `runner/legacy_planner/orchestrator.run_loop`
+(the planner-authors-variant path). The current primary loop is `runner/track3/loop.py`;
+see README.md and FLOW.md for it.
 Files/artifacts are shown as rectangles; processes as rounded boxes; branches as diamonds.
 
 ```mermaid

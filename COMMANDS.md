@@ -14,6 +14,9 @@ python runner/track3/loop.py --task 2739a678-1759-516d-8ba7-1cd023267ea8 --itera
 # force a specific iteration number
 python runner/track3/loop.py --task <name|uuid|path> --iterations 1 --start-at 7
 
+# pick the in-container agent (both use the same Claude OAuth bridge)
+python runner/track3/loop.py --task <task> --iterations 2 --agent openhands-sdk
+
 # opt in to the LLM judge / summariser (currently unwired by default)
 python runner/track3/loop.py --task <task> --iterations 2 --summarise --judge
 
@@ -165,7 +168,7 @@ harbor run -p /tmp/mounted_task -a oracle -n 1 --env docker
 ## Autonomous refinement loop (multiple attempts)
 
 The runner supports LLM-driven refinement. Passing `--attempts N > 1` delegates
-to `runner/orchestrator.run_loop`, which builds an LLM system prompt from the
+to `runner/legacy_planner/orchestrator.run_loop`, which builds an LLM system prompt from the
 shared `policy/AGENTS.md` + the task's own `instruction.md` + the auto-refreshed
 `policy/<slug>/plan.md` + `goal.md`, calls the LLM with tool_use tools
 (`write_variant`, `append_thread`, `update_plan_section`, `add_ruled_down`),

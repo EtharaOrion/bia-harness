@@ -88,6 +88,10 @@ container, and our code drives everything around it.
 │  3. Build + validate config (track3/harbor_config.py)                   │
 │     build_base_cfg -> job_name, jobs_dir (under the run root), agents[] │
 │     with model_name/env, tasks[].path, retry policy.                    │
+│     --agent picks who authors in-container. Both hit the SAME bridge;   │
+│       claude-code   -> ANTHROPIC_BASE_URL/_API_KEY, model bare          │
+│       openhands-sdk -> LLM_BASE_URL/LLM_API_KEY, model anthropic/-      │
+│                        prefixed (LiteLLM needs it to route).            │
 │     history path attached as extra_instruction_paths.                   │
 │     validate_cfg checks it against harbor's REAL JobConfig and rejects  │
 │     unknown keys at every depth (harbor itself would ignore them).      │

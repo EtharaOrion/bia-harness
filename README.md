@@ -95,8 +95,28 @@ owns it.
 
 ```bash
 python runner/track3/loop.py --task <name|uuid|path> --iterations N \
-  [--start-at N] [--summarise] [--judge] [--harbor-bin PATH]
+  [--start-at N] [--agent claude-code|openhands-sdk] \
+  [--summarise] [--judge] [--harbor-bin PATH]
 ```
+
+### Which agent runs in the container
+
+`--agent` selects the harbor agent that authors the optimizer. Both reach the **same**
+Claude OAuth bridge; only the env var names differ, because that is what each agent
+reads:
+
+| `--agent` | env it reads | model string |
+|---|---|---|
+| `claude-code` (default) | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY` | `claude-opus-5` |
+| `openhands-sdk` | `LLM_BASE_URL`, `LLM_API_KEY` | `anthropic/claude-opus-5` |
+
+`openhands-sdk` drives LiteLLM, which needs the `anthropic/` provider prefix to route
+to the Messages API the bridge serves; the `claude` CLI wants the model bare. The
+bridge itself is unchanged either way.
+
+`openhands-sdk` pip-installs into `/opt/openhands-sdk-venv` during agent setup, which
+is slower than claude-code's `npm install`. If setup times out, raise
+`build_base_cfg(..., setup_timeout_multiplier=...)` (default `5.0`).
 
 On disk, per task:
 
