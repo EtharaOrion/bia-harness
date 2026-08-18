@@ -15,7 +15,7 @@ import pytest
 import harness
 
 
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
 BIA_TASK = HARNESS_ROOT / "tasks" / "2739a678-1759-516d-8ba7-1cd023267ea8"
 NANOGPT = HARNESS_ROOT / "tasks" / "nanogpt-speedrun"
 

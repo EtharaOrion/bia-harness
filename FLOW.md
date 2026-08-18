@@ -170,8 +170,12 @@ the task image); otherwise it skips, because one iteration starts a GPU containe
 
 ## BIA verifier flow
 
-`bia_verifier` is an explicit post-run verification pipeline rather than a
-hidden part of metric extraction:
+Legacy path only; `agentloop` does not invoke it. Lives at
+`legacy/harness2/bia_verifier/`, run as
+`python -m legacy.harness2.bia_verifier.cli` from the repo root.
+
+An explicit post-run verification pipeline rather than a hidden part of metric
+extraction:
 
 1. Load the dataset truth path and concern registry; reject a non-MECE spec.
 2. Discover submission, logs, telemetry, trajectory, and observed reward.

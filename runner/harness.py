@@ -30,10 +30,11 @@ from urllib.parse import urlparse
 HARNESS_ROOT = Path(__file__).resolve().parent.parent
 TASKS_ROOT = HARNESS_ROOT / "tasks"
 DEFAULT_LEDGER = HARNESS_ROOT / "runs.jsonl"
+LEGACY_HARNESS2 = HARNESS_ROOT / "legacy" / "harness2"
 
 sys.path.insert(0, str(HARNESS_ROOT / "runner"))
 # legacy/harness2 modules are imported flat (`import orchestrator`), not as a package.
-sys.path.insert(0, str(HARNESS_ROOT / "legacy" / "harness2"))
+sys.path.insert(0, str(LEGACY_HARNESS2))
 from mount_variant import mount_task  # noqa: E402
 from ingest_result import normalize, append  # noqa: E402
 from agentloop.marking import mark_reward_payload  # noqa: E402
@@ -232,7 +233,11 @@ def bia_grade_seed(seed_work_dir: Path, verifier_dir: Path, *,
         cmd += ["--task-reward", str(task_reward)]
 
     env = os.environ.copy()
-    env.setdefault("PYTHONPATH", str(HARNESS_ROOT))
+    # bia_verifier now lives under legacy/harness2/, so cwd no longer makes it
+    # importable: this entry is load-bearing and must not be skipped by setdefault.
+    env["PYTHONPATH"] = os.pathsep.join(
+        p for p in (str(LEGACY_HARNESS2), str(HARNESS_ROOT), env.get("PYTHONPATH", "")) if p
+    )
     proc = subprocess.run(cmd, cwd=str(HARNESS_ROOT), capture_output=True, text=True,
                           env=env, check=False)
     reward_json_path = out_dir / "reward.json"

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-TASKS_ROOT = Path(__file__).resolve().parent.parent / "tasks"
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
+TASKS_ROOT = Path(__file__).resolve().parents[3] / "tasks"
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
 TASK_DIRS = sorted(p for p in TASKS_ROOT.iterdir() if p.is_dir())
 TASK_IDS = [p.name for p in TASK_DIRS]
 

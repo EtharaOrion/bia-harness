@@ -12,8 +12,10 @@ from bia_verifier.registry import Registry
 from bia_verifier.rubric import Rubric
 from bia_verifier.schemas import Owner
 
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
 TASKS_ROOT = HARNESS_ROOT / "tasks"
+# `python -m bia_verifier.cli` resolves from here, not HARNESS_ROOT, since the move.
+BIA_VERIFIER_PARENT = HARNESS_ROOT / "legacy" / "harness2"
 
 
 def _verifier_dirs() -> list[Path]:
@@ -51,7 +53,7 @@ def test_cli_prove_reports_mece_sound(verifier_dir):
     dataset = verifier_dir / "dataset.json"
     result = subprocess.run(
         [sys.executable, "-m", "bia_verifier.cli", "prove", "--dataset", str(dataset)],
-        cwd=str(HARNESS_ROOT), capture_output=True, text=True,
+        cwd=str(BIA_VERIFIER_PARENT), capture_output=True, text=True,
     )
     assert result.returncode == 0, (
         f"prove failed for {verifier_dir}:\n"

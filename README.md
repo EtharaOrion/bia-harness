@@ -11,50 +11,75 @@ under `tasks/`.
 ```
 .
 ├── policy/                              markdown-only agent policy (task-agnostic)
-│   ├── AGENTS.md, goal.md, plan.md, README.md
-│   └── scratchpad/                      THREAD.md, picklist.md, audits.md, variants/, ideas/, papers/
+│   ├── AGENTS.md, README.md             the conduct spec, shared by every task
+│   └── <task-slug>/                     scaffolded per task on first autonomous run
+│       ├── goal.md, plan.md             mission + live state
+│       ├── scratchpad/                  THREAD.md, picklist.md, audits.md, variants/
+│       └── runNN/                       frozen {goal.md, plan.md, variants/} per attempt
 ├── shared/                              cross-task assets injected at mount time
 │   ├── train_gpt_simple.py              Track-3 baseline trainer (used by nanogpt-speedrun)
 │   ├── track3_README.md                 official spec mirror
 │   └── data/cached_fineweb10B.py        FineWeb-10B downloader
 ├── tasks/                               task registry
 │   ├── nanogpt-speedrun/                the Track-3 speedrun task
-│   │   ├── task.toml                    Harbor v1.0 (name='nanogpt/track3-speedrun')
+│   │   ├── task.toml                    version='1.0' (name='nanogpt/track3-speedrun')
 │   │   ├── mount.toml                   [[shared]] + [variant]
 │   │   ├── instruction.md
 │   │   ├── environment/Dockerfile       (trainer injected at mount time)
 │   │   ├── solution/solve.sh
+│   │   ├── tests/{test.sh, grader.py}
+│   │   └── verifier/                    dataset/predicates/rubric for the legacy verifier
+│   ├── nanogpt-smoke/                   env-sanity task (no shared, no variant)
+│   │   ├── task.toml (name='nanogpt/env-smoke', gpus=0)
+│   │   ├── mount.toml                   version-only (empty)
+│   │   ├── instruction.md
+│   │   ├── environment/Dockerfile       (python:3.12-slim + torch cpu)
+│   │   ├── solution/solve.sh
 │   │   └── tests/{test.sh, grader.py}
-│   └── nanogpt-smoke/                   env-sanity task (no shared, no variant)
-│       ├── task.toml (name='nanogpt/env-smoke', gpus=0)
-│       ├── mount.toml                   version-only (empty)
-│       ├── instruction.md
-│       ├── environment/Dockerfile       (python:3.12-slim + torch cpu)
-│       ├── solution/solve.sh
-│       └── tests/{test.sh, grader.py}
+│   └── <uuid>/                          two bia/track3nov bundles, schema_version='1.4';
+│                                        /workspace ships in the image, so no mount.toml
+│                                        and no [variant] — agentloop serves these
 ├── runner/                              the CURRENT pipeline, and nothing else
+│   ├── __init__.py
 │   ├── harness.py                       --task <name|path> --variant <path> --backend {harbor,local,dry}
-│   │                                    shared by both loops; stays here
+│   │                                    SHARED. agentloop imports exactly four symbols from it —
+│   │                                    HARNESS_ROOT, resolve_task, resolve_task_uuid,
+│   │                                    resolve_harbor_bin — and never calls harness.run
+│   │                                    or any dispatcher.
 │   └── agentloop/                       code-driven refinement loop (agent authors code in-container)
-│       ├── loop.py                      CLI + refine(); the ledger is the loop state
+│       ├── loop.py                      driver + CLI; refine(); the ledger is the loop state
+│       ├── history.py                   renders prior iterations into agent-facing markdown,
+│       │                                through the scrub firewall
+│       ├── trial_io.py                  parse one completed trial -> one flat ledger row
+│       ├── reward.py                    scores an iteration from the val_loss curve
+│       ├── classify.py                  six outcomes
 │       ├── harbor_config.py             builds/validates the harbor --config JSON
-│       ├── history.py                   renders prior iterations into agent-facing markdown
-│       ├── trial_io.py                  one trial dir -> one flat ledger row
-│       └── classify.py, judge.py, summariser.py, marking.py
-├── tests/                               pytest for the current pipeline + task-level checks
+│       ├── marking.py                   synthetic-result marking + banner
+│       └── judge.py, summariser.py      present and tested, but UNWIRED (see below)
+├── tests/                               pytest for the current pipeline (agentloop + shared harness)
+│   └── fixtures/track3_trial/           a REAL captured Harbor trial; 5 test files parse it
 ├── records/                             upstream Track-3 reference (results history, baselines)
 ├── legacy/                              off the current run path
-│   ├── harness1/                        Track-1 substrate + prior audit docs
-│   └── harness2/                        planner-authors-the-variant loop (was runner/legacy_planner/)
-│       ├── orchestrator.py              run_loop(): the 7-stage host-side feedback loop
+│   ├── harness1/                        Track-1 substrate + prior audit docs (was the top-level legacy/)
+│   └── harness2/                        planner-authors-the-variant loop (was under runner/)
+│       ├── orchestrator.py              run_loop(): the host-side feedback loop
 │       ├── mount_variant.py             mount_task(task, out, variant) reads mount.toml
-│       ├── ingest_result.py             20-field canonical row -> runs.jsonl
+│       ├── ingest_result.py             canonical row -> runs/<task-slug>/runs.jsonl
 │       ├── llm_client.py, plan_writer.py, scaffold_policy.py, summarize.py
+│       ├── bia_verifier/                moved here from the repo root; NOT used by agentloop
 │       └── tests/                       its own pytest suite, moved with it
-├── runs.jsonl                           append-only ledger (task_id per row)
+├── runs/                                run artifacts (gitignored)
+│   ├── agentloop/<slug>/                agentloop campaigns
+│   └── <task-slug>/runs.jsonl           the legacy path's per-task append-only ledger
+├── personal-docs/                       the author's own notes, incl. BIA_VERIFIER.md (gitignored)
 ├── LICENSE, pyproject.toml, requirements.txt
-└── README.md, FLOW.md, COMMANDS.md
+└── README.md, FLOW.md, COMMANDS.md, DFD.md
 ```
+
+`bia_verifier/` moved to `legacy/harness2/bia_verifier/` because it belongs to the
+legacy path, not to `agentloop`. It was moved rather than deleted: a verifier may be
+rewired into the loop later. It is importable as
+`legacy.harness2.bia_verifier` from the repo root.
 
 ## Design principles
 
@@ -75,12 +100,13 @@ under `tasks/`.
 - **Policy** (markdown, in `policy/`) — the conduct spec the orchestrator
   reads at session start.
 - **Execution** (task + runner) — the reward machine. Runner mounts, dispatches,
-  grades, appends structured results to `runs.jsonl`.
+  grades, appends structured results to the task's ledger.
 
-Autonomous loop: orchestrator writes `policy/scratchpad/variants/<slug>.py`
-per `AGENTS.md` rules → runner mounts variant into the chosen task → dispatch
-to {harbor,local,dry} → grader emits `reward.json` → ingest normalizes into
-`runs.jsonl` → orchestrator reads the ledger and updates `plan.md`.
+Autonomous loop: orchestrator writes
+`policy/<task-slug>/scratchpad/variants/<slug>.py` per `AGENTS.md` rules → runner
+mounts variant into the chosen task → dispatch to {harbor,local,dry} → grader emits
+`reward.json` → ingest normalizes into `runs/<task-slug>/runs.jsonl` → orchestrator
+reads the ledger and updates `plan.md`.
 
 ## Two refinement loops, and which one a task can use
 
@@ -97,13 +123,21 @@ to {harbor,local,dry} → grader emits `reward.json` → ingest normalizes into
   and parses the resulting trial, classifies the outcome, and appends one ledger row.
 
 Use `run_loop` when the harness owns the candidate; use `agentloop` when the container
-owns it.
+owns it. The two bia/track3nov bundles under `tasks/<uuid>/` ship `/workspace` inside
+the image, so they can only be served by `agentloop`.
 
 ```bash
 python runner/agentloop/loop.py --task <name|uuid|path> --iterations N \
   [--start-at N] [--agent claude-code|openhands-sdk] \
-  [--summarise] [--judge] [--harbor-bin PATH]
+  [--summarise] [--judge] [--harbor-bin PATH] \
+  [--timeout SECONDS] [--keep-jobs N]
 ```
+
+**Not yet proven end to end.** Every run of this loop so far has used harbor's `nop`
+agent, which starts the container and does nothing. The loop has NEVER been run with a
+real LLM agent authoring an optimizer end to end, and `runs/agentloop/` on this machine
+is empty. What is proven is the plumbing: config build/validation, launch, trial
+location and parsing, scoring, classification and the ledger.
 
 ### Which agent runs in the container
 
@@ -156,16 +190,56 @@ The step is measured on the **full-density** log points, not on the thinned
 `parent_curve` that gets rendered into the prompt — thinning is a display budget and
 must never move a score.
 
+A test parses the constants straight out of `tasks/<uuid>/tests/grade.py` and fails
+loudly if the two ever drift apart: `reward.py` mirrors those numbers rather than
+importing them, because `grade.py` is stdlib-only code that runs in the container.
+
 ### Currently unwired
 
 The task's own verifier and the LLM judge/summariser are **not** in the default path.
 Reward comes from the formula above; `judge.py` and `summariser.py` remain on disk and
-tested, and are opt-in via `--judge` / `--summarise`.
+tested, and are opt-in via `--judge` / `--summarise`. Both flags describe themselves as
+EXPERIMENTAL in `--help`; a bare run reaches no LLM at all.
 
 **The ledger is the loop state.** `start` is derived from its length and every row is
 appended the moment it is produced, so an interrupted campaign resumes where it
 stopped instead of restarting — just re-run the same command. `--start-at` overrides
 that only when you need it.
+
+### What the loop does when things go wrong
+
+- **`--timeout SECONDS` bounds one harbor job.** It is threaded to `subprocess.run`;
+  a job killed by it is recorded with `harbor_returncode=124` (GNU `timeout(1)`'s
+  convention) and the campaign continues. Default is no limit, so a wedged container
+  hangs the campaign forever unless you pass this.
+- **Ctrl-C records before it re-raises.** An interrupt during a job writes the row for
+  what was already measured, with `interrupted: true` and `harbor_returncode=130`, then
+  lets the `KeyboardInterrupt` continue upward. An iteration that consumed GPU time
+  always leaves a trace.
+- **Containers created during an iteration are removed on exit.** Harbor's containers
+  are not children of the harbor process, so a timeout or a Ctrl-C would leave them
+  holding GPUs. Each iteration snapshots the running `task__*` containers before
+  launching and force-removes only the *difference* in a `finally` — never a container
+  that was already running, which on a shared host belongs to somebody else.
+- **One campaign per task, enforced by `flock`.** `refine` runs under an exclusive
+  lock on `run_root/.lock`. Two concurrent runs of one task would share the run root,
+  the ledger, the `start` each derives from it, the job name and the config file; the
+  second one raises `RunRootBusy` instead. There is deliberately no `--force`: flock is
+  released by the kernel when the holder dies, so a held lock is always evidence of a
+  live run. `fuser run_root/.lock` names the holder.
+- **Ledger appends are one atomic write, under that lock.** A row can carry ~18000
+  chars of `parent_source` and POSIX only guarantees atomic `O_APPEND` up to `PIPE_BUF`,
+  so the whole line leaves in a single `os.write` followed by `fsync`.
+- **`load_ledger` warns loudly instead of skipping in silence.** A malformed line is
+  still skipped — rows are appended after every iteration, so a kill mid-write leaves a
+  truncated final line and refusing to parse would strand every completed iteration
+  before it. But each skip is printed with its line number and a summary, because
+  `start = len(rows) + 1` means a dropped row silently renumbers every iteration after it.
+- **`--keep-jobs N` prunes old job dirs, and is off by default.** After a successful
+  iteration it deletes all but the newest N dirs under `run_root/jobs`, never the one
+  just produced, never on the interrupted path, and never at all unless you pass the
+  flag. Harbor trial artifacts are gigabytes per GPU trial; silently deleting one would
+  be worse than the full disk it prevents.
 
 **`--export-traces` is passed as a CLI flag, never as a config key.** Harbor's
 `JobConfig` is pydantic `extra="ignore"`, so an unknown key is silently dropped: an
@@ -184,16 +258,60 @@ The real harbor/docker path is covered by `tests/test_agentloop_integration.py`,
 opt-in: it only runs under `TRACK3_INTEGRATION=1` with docker and the task image
 present, because one iteration starts a real GPU container.
 
+### `tests/fixtures/track3_trial/` — the tests parse real data, not mocks
+
+Every other agentloop test replaces `subprocess.run` with a fake, but what that fake
+materialises is a **real captured Harbor trial**, checked in at ~160K:
+
+```
+tests/fixtures/track3_trial/
+├── config.json                              the job config harbor actually ran
+├── result.json                              tokens, cost, timestamps, exception state
+├── agent/{trajectory.json, claude-code.txt} the exported agent trace
+├── verifier/{reward.json, reward_full.json} trial_io reads reward_full, not reward
+└── artifacts/workspace/submission/
+    ├── optimizer.py                         the optimizer the agent actually submitted
+    └── logs/full_seed{0,1}.log              full-density val_loss curves, two seeds
+```
+
+Five test files parse it: `test_trial_io.py`, `test_agentloop_fixture.py`,
+`test_agentloop_loop.py`, `test_agentloop_judge.py`, `test_agentloop_integration.py`.
+That is the point — the parsers are exercised against a directory harbor genuinely
+wrote, so a change in harbor's layout surfaces as a test failure rather than as a
+reward-0 row in a live campaign.
+
+The name keeps "track3" deliberately: this is a trial of the `bia/track3nov` **task**,
+so the word describes where the data came from. It does not refer to the old
+`runner/track3/` package name.
+
 ## Quickstart
 
 ```bash
-# The suite is both trees (tests/ + legacy/harness2/tests/); run it with a bare
-# `pytest` so pyproject's testpaths apply. `pytest tests/` is the new-pipeline half.
-python -m pytest
+# The suite is BOTH trees. pyproject sets testpaths = ["tests", "legacy/harness2/tests"],
+# so the suite command is a BARE `pytest` with no path argument.
+pytest
 
-# Task 1 with variant swap
+# The new-pipeline half only (agentloop + the shared harness) — fully green.
+pytest tests/
+```
+
+As of this writing:
+
+| command | result |
+|---|---|
+| `pytest` | 2 failed, 640 passed, 10 skipped |
+| `pytest tests/` | 437 passed, 2 skipped |
+| `pytest legacy/harness2/tests` | 2 failed, 203 passed, 8 skipped |
+
+Both failures are `test_task_toml_parses` for the two `bia/track3nov` bundles, whose
+`task.toml` declares `schema_version = "1.4"` while that test asserts `version = "1.0"`.
+They are pre-existing and unrelated to the restructure; they are a stale assertion about
+a newer Harbor schema, not a broken task.
+
+```bash
+# Task 1 with variant swap (any .py works; this one is a real prior candidate)
 python runner/harness.py --task nanogpt-speedrun \
-  --variant policy/scratchpad/variants/demo_smoke.py \
+  --variant policy/nanogpt-track3-speedrun/scratchpad/variants/iter0.py \
   --seeds 2 --backend dry
 
 # Task 2 without variant (env sanity)
@@ -201,14 +319,17 @@ python runner/harness.py --task nanogpt-smoke \
   --seeds 1 --backend dry
 
 # Work artifacts land under runs/<task>_<variant>_seed<N>_<utc-stamp>/
-# Ledger rows land in runs.jsonl (append-only).
+# Ledger rows land in runs/<task-slug>/runs.jsonl (append-only), slug from task.toml
+# [task].name — so nanogpt/env-smoke writes runs/nanogpt-env-smoke/runs.jsonl.
 ls runs/
-cat runs.jsonl
+cat runs/nanogpt-env-smoke/runs.jsonl
 ```
 
-For real GPU runs, see `COMMANDS.md`. Full stage-by-stage pipeline in `FLOW.md`.
-Verifier setup, rubric authoring, Codex judge operation, pytest enforcement, and
-artifact contracts are documented in `BIA_VERIFIER.md`.
+For real GPU runs, see `COMMANDS.md`. Full stage-by-stage pipeline in `FLOW.md`. The
+superseded planner path is diagrammed in `DFD.md`. Verifier setup, rubric authoring,
+Codex judge operation, pytest enforcement, and artifact contracts are documented in
+`personal-docs/BIA_VERIFIER.md` — all of which describe
+`legacy/harness2/bia_verifier/`, which no current run path invokes.
 
 For autonomous refinement, use `--attempts N` (`--iterations` is a deprecated
 alias). Each attempt evaluates one LLM-authored candidate across `--seeds S`,
@@ -227,8 +348,10 @@ which defaults to 2. `--llm-retries R`, default 3, applies only to planner LLM
    `{reward: 0.0-1.0, ...metrics}` JSON (to stdout for the runner path, or
    to `/logs/verifier/reward.json` for the Harbor `test.sh` path).
 4. Smoke-test: `python runner/harness.py --task <my-task> --seeds 1 --backend dry`.
-5. `python -m pytest` automatically parametrizes over all tasks and
-   validates `task.toml` + `mount.toml` for your new task.
+5. A bare `pytest` automatically parametrizes over all tasks and validates
+   `task.toml` + `mount.toml` for your new task. Those parametrized checks live in
+   `legacy/harness2/tests/` and are only collected by the bare command, not by
+   `pytest tests/`.
 
 ## Not on this machine
 
