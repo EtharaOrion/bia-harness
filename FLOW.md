@@ -168,6 +168,47 @@ are not validated results and must not be reported as such.
 but only under `TRACK3_INTEGRATION=1` (plus a harbor binary, a live docker daemon and
 the task image); otherwise it skips, because one iteration starts a GPU container.
 
+## Delivery packaging (`tools/package_delivery.py`)
+
+Runs after a campaign, never during one. Reads `runs/agentloop/<uuid>/`, writes a
+delivery bundle; the source campaign is not modified.
+
+```
+runs/agentloop/<uuid>/jobs/agentic_iterNN/<trial>/   ->  trajectories/<model-slug>/run_N/
+```
+
+`run_N` follows the `agentic_iterNN` number, so run numbering matches iteration
+numbering. The model slug comes from `agent_info.model_info.name` in each trial's
+`result.json`; the conversion aborts if trials disagree, because one bundle cannot
+describe two models.
+
+Per run:
+
+| destination | source | transform |
+|---|---|---|
+| `agent/trajectory.json` | `agent/trajectory.json` | verbatim |
+| `agent/history.md` | `config.extra_instruction_paths[0]` | verbatim; absent for iteration 1 |
+| `artifacts/optimizer.py` | `artifacts/**/submission/optimizer.py` | flattened |
+| `config.json` | trial `config.json` | pruned to 7 keys, secrets templatized |
+| `result.json` | trial `result.json` | `verifier_result.rewards` renamed to `scores` |
+| `verifier/score.json` | `verifier/score.json` or `reward.json` | numeric-only |
+| `verifier/score.md` | `verifier/score.md` | synthesised from `score.json` if absent |
+| `verifier/grade-stdout.md` | `.md`, else `.txt` | verbatim |
+| `verifier/test-stdout.md` | `.md`, else `.txt` | two provenance lines prepended |
+
+Dropped: `lock.json`, `trial.log`, `agent/claude-code.txt`, `agent/sessions/`,
+`agent/setup/`, `artifacts/manifest.json`, `artifacts/logs/`.
+
+The `test-stdout.md` header names the destination path and the trial's own
+`finished_at`, not the packaging wall clock, so reconverting a campaign reproduces
+identical bytes. Its second line states what produced the transcript; when the task
+image has no pytest it says so rather than crediting a suite that never ran.
+
+The whole tree is planned in memory before any byte is written, so a failure part-way
+through leaves no half-written delivery and `--dry-run` audits exactly what a real run
+would produce. `manifest.json` records every rename, redaction, drop, fallback and
+header.
+
 ## BIA verifier flow
 
 Legacy path only; `agentloop` does not invoke it. Lives at

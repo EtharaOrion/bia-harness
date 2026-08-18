@@ -67,6 +67,70 @@ TRACK3_INTEGRATION=1 pytest tests/test_agentloop_integration.py -v
 Caveat: this loop has only ever been driven with harbor's `nop` agent. It has never
 been run with a real LLM agent end to end.
 
+## Package a delivery bundle
+
+Converts one agentloop campaign into the client delivery format: the task bundle at
+the root, plus `trajectories/<model-slug>/run_N/` per iteration.
+
+```bash
+# convert a finished campaign (run_N ordered by agentic_iterNN)
+python tools/package_delivery.py \
+  --run-root runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147 \
+  --out /tmp/delivery
+
+# plan and audit without writing a byte
+python tools/package_delivery.py --run-root <run-root> --out /tmp/delivery --dry-run
+
+# overwrite a previous conversion (only converter-managed entries are removed)
+python tools/package_delivery.py --run-root <run-root> --out /tmp/delivery --force
+```
+
+Per run it emits `agent/trajectory.json`, `agent/history.md` (absent for iteration 1,
+which has no prior history), `artifacts/optimizer.py`, `config.json` pruned to the seven
+delivery keys, `result.json`, and `verifier/{grade-stdout.md,score.json,score.md,test-stdout.md}`.
+
+`manifest.json` at the delivery root records every rename, redaction, dropped file,
+fallback and added header. Check it after each conversion:
+
+```bash
+python -c "import json;m=json.load(open('/tmp/delivery/manifest.json'));\
+print({k:len(v) for k,v in m.items() if isinstance(v,list)})"
+```
+
+Secrets are redacted to `${VARNAME}` and the output is scanned for the literal values
+before it is written; a leak aborts the conversion. `rubric_verdicts.json` is not
+produced because the judge is unwired.
+
+Packaging refuses to run while a campaign holds the run root's `.lock`, since it would
+otherwise copy a trial mid-write. An iteration that submitted no optimizer is skipped
+with a warning and listed under `skipped` in the manifest rather than aborting the
+conversion.
+
+## LLM bridge
+
+The bridge injects a Claude OAuth subscription token, so configs carry only the
+placeholder key `sk-ant-oauth-bridge-stub`.
+
+```bash
+proxy/claude_code_bridge.sh start     # start + monitor, then smoke (non-fatal)
+proxy/claude_code_bridge.sh smoke     # real POST /v1/messages; non-zero exit on failure
+proxy/claude_code_bridge.sh check     # resolve credentials only, no request
+proxy/claude_code_bridge.sh status    # bridge + monitor state, /healthz body
+proxy/claude_code_bridge.sh stop      # monitor first, then bridge
+```
+
+`check` and `/healthz` prove credentials resolve; neither contacts Anthropic. `smoke`
+sends a real request carrying a custom `system` field, which is the path a malformed
+system prefix breaks, so it is the only check that proves the bridge can actually serve.
+
+Accounts rotate. `AURORA_CC_ACCOUNT_POOL` is a colon-separated list of credential-file
+paths, defaulting to the logged-in account plus any known fallback; slot order is
+priority, and a rate-limited slot is skipped until its reset.
+
+```bash
+curl -s http://127.0.0.1:8765/quota | python -m json.tool   # per-account exhaustion
+```
+
 ## Setup
 
 ### CPU host (wiring tests only)

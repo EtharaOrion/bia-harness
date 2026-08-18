@@ -337,6 +337,29 @@ which defaults to 2. `--llm-retries R`, default 3, applies only to planner LLM
 429/timeout retries; it does not retry training runs. The old ambiguous
 `--retries` flag is intentionally rejected.
 
+## Delivering a campaign
+
+`tools/package_delivery.py` converts one agentloop campaign into the client delivery
+format. See COMMANDS.md for flags and FLOW.md for the per-file transform table.
+
+```bash
+python tools/package_delivery.py --run-root runs/agentloop/<uuid> --out /tmp/delivery
+```
+
+The delivery carries the task bundle at its root and one `run_N` per iteration. Two
+bundle-side files exist for that format rather than for the loop:
+
+- `tasks/<task>/tests/emit_verifier_artifacts.py` writes `verifier/score.json`
+  (numeric-only, the reason carried as an integer `reason_code`) and appends the full
+  record to `grade-stdout.md`. Harbor parses every value in `score.json` as a number,
+  so a string reason there drops the trial's score silently. `reward.json` and
+  `reward_full.json` are still written; the loop reads `reward_full.json` for `reason`
+  and `metrics.n_seeds`.
+- `tasks/<task>/solution/provenance.yaml` records what the task was screened against
+  and by what method. It states only screening actually performed and declares the rest
+  absent with a reason, because a carrier describing screening that did not happen
+  converts a visible gap into an invisible false claim.
+
 ## Adding a new task
 
 1. Create `tasks/<my-task>/` with: `task.toml`, `mount.toml`, `instruction.md`,
