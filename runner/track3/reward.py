@@ -15,6 +15,18 @@ inside the task bundle and is executed in-container against a stdlib-only interp
 Importing it from here would couple the outer loop to a task's test tree; mirroring
 costs a comment and keeps this module usable when no task bundle is on the path.
 
+The cost of that mirror is DRIFT: edit the numbers in the bundle and this module goes
+on scoring the whole campaign against the old ones, with no exception and no log line.
+`constants_from_grade_py` reads them back out of the bundle by PARSING it -- the file
+is in-container code that reads env vars and writes `reward.json`, so it must never be
+imported out here -- and `tests/test_track3_reward.py` asserts the two agree, naming
+both values when they do not. Detection, not rebinding: the module-level constants stay
+the default scoring path, because a score that silently changes when a task directory
+happens to be resolvable is a worse failure than one that is merely stale, and the
+ledger's rewards must stay comparable across a campaign. A caller that wants the
+bundle's numbers can pass `constants_from_grade_py(task_dir)["TARGET_LOSS"]` into
+`step_to_target`/`reward_from_curve`, which already take `target_loss` as a parameter.
+
 AGREEMENT ACROSS SEEDS. `grade.py::graded_step` documents the rule this implements:
 "every seed must individually reach TARGET_LOSS. instruction.md promises 'at least
 two seeds must clear'; a mean-only test lets one lucky seed carry a failing one."
@@ -43,10 +55,49 @@ task's grade, and first-crossing-per-seed is the comparable quantity across runs
 """
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 # Mirrored from tasks/2739a678-1759-516d-8ba7-1cd023267ea8/tests/grade.py:34-36.
+# Kept honest by tests/test_track3_reward.py, which parses that file and compares.
 BASELINE_STEPS = 3500
 TARGET_STEPS = 2900
 TARGET_LOSS = 3.28
+
+MIRRORED_FROM_GRADE_PY = ("BASELINE_STEPS", "TARGET_STEPS", "TARGET_LOSS")
+
+
+def constants_from_grade_py(task_dir) -> dict[str, float]:
+    """Read the mirrored constants back out of a task bundle's `tests/grade.py`.
+
+    Accepts the bundle root, its `tests/` dir, or the file itself. The file is PARSED,
+    never imported: it is stdlib-only in-container grader code that reads env vars and
+    writes `reward.json`, and executing a task's test tree to score a run out here would
+    be a side effect for a lookup. Only module-level assignments count -- a name rebound
+    inside a function is not part of the contract.
+
+    Raises `FileNotFoundError` if no `grade.py` is there and `ValueError` if it does not
+    define all three, so a caller cannot mistake a half-read file for agreement.
+    """
+    path = Path(task_dir)
+    if path.is_dir():
+        path = path / "grade.py" if path.name == "tests" else path / "tests" / "grade.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"no grade.py to read constants from: {path}")
+
+    found: dict[str, float] = {}
+    for node in ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body:
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id in MIRRORED_FROM_GRADE_PY:
+                try:
+                    found[target.id] = ast.literal_eval(node.value)
+                except ValueError:
+                    continue
+    missing = [name for name in MIRRORED_FROM_GRADE_PY if name not in found]
+    if missing:
+        raise ValueError(f"{path} defines no module-level {', '.join(missing)}")
+    return found
 
 
 def compute_reward(step: int | float | None) -> float:

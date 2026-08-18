@@ -4,7 +4,7 @@ Ported from track3-pipeline/tools/refine.py (`FORBIDDEN`, `scrub`, `render_histo
 `_restate_budget`, `render_parent`). This is the only module in the loop whose output
 is read by the agent, so every rule here is a containment rule, not a formatting one.
 
-Three of them are load-bearing:
+Four of them are load-bearing:
 
 * THE SCRUB FIREWALL (ENGRAM's projection-as-a-function). The per-iteration prose is
   written by an LLM summariser reading a trajectory that may quote grader internals.
@@ -18,6 +18,14 @@ Three of them are load-bearing:
   teaches the next attempt to abandon an approach that was never actually tested. Only
   `graded_pass`/`graded_miss` -- outcomes where the verifier really produced a score --
   may show a figure.
+
+* EVERY UNGRADED OUTCOME MUST STEER. `classify` returns `unknown` for any verifier reason
+  string it does not recognise, and that used to render as outcome `unknown`, reward cell
+  `not graded`, and no guidance at all -- the agent was shown a 0.0 with no account of it
+  and no instruction, and repeated the failure. Three consecutive unscored iterations in
+  the live pipeline came through this hole. `unknown` therefore gets its own block, and
+  joins the telemetry-binding set, since an unreadable verdict most often means the
+  telemetry never bound.
 
 * THE PARENT GUARD (AIDE's node-based operators). Source is carried forward only for an
   attempt the verifier scored above zero. A scored parent is a proven artifact worth
@@ -197,7 +205,24 @@ def render_history(rows: list[dict], total_iterations: int | None = None,
             "",
         ]
 
-    if any(r["outcome"] in ("agent_abandoned_run", "harness_incomplete", "gate_fail")
+    if shown[-1]["outcome"] == "unknown":
+        out += [
+            "## Your last attempt returned no recognisable verdict -- read this carefully",
+            "",
+            "The run ended without producing a result this loop could read, so it was",
+            "recorded as `unknown` and carries 0.0. That 0.0 is bookkeeping, not a",
+            "measurement: your update rule was never scored, so this is NOT evidence that",
+            "your approach failed, and abandoning it on that basis would be a mistake.",
+            "",
+            "Usually the run never got as far as being scored -- it was cut short, or its",
+            "telemetry did not bind to the optimizer present at the end (see below). Do not",
+            "redesign around this. Produce ONE completed, reconciled 2-seed run and get a",
+            "real number on the board; only then is there anything to judge the idea by.",
+            "",
+        ]
+
+    if any(r["outcome"] in ("agent_abandoned_run", "harness_incomplete", "gate_fail",
+                            "unknown")
            for r in shown):
         out += [
             "## Telemetry binding",

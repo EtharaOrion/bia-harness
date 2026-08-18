@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import sys
 from datetime import datetime
 
 from track3.classify import _graded_step, classify
@@ -202,19 +203,83 @@ def agent_findings(trial: pathlib.Path, cap: int = MAX_FINDINGS_CHARS) -> str:
     return ""
 
 
-def find_trial(job_dir: pathlib.Path, since: float) -> pathlib.Path | None:
-    """The trial this job just produced, preferring one written after `since`.
+MTIME_SLACK_SECS = 5.0
 
-    The mtime filter (with five seconds of slack for clock skew between the launcher
-    and the filesystem) is a preference, not a requirement: if nothing looks fresh the
-    glob is repeated unfiltered, because a stale-but-real trial is more useful to the
-    caller than None.
+
+def _trial_candidates(job_dir: pathlib.Path) -> list[tuple[pathlib.Path, float, float]]:
+    """Every child holding a result.json, as (dir, ordering_time, arrival_time).
+
+    Each directory is statted inside the try because a job dir is live: harbor, a
+    reaper or an operator can unlink a trial between `glob` yielding it and us
+    reading it, and an OSError here would abort an otherwise recoverable iteration.
+    A directory that vanished is simply not a candidate.
+
+    The two times answer two different questions and must not be conflated. Ordering
+    ("which trial is newest") is mtime, the only signal that ranks trials against
+    each other. Arrival ("did this land during THIS iteration") is max(mtime, ctime),
+    because mtime is content-modification time and is deliberately preserved by copy,
+    extract and archive-mode sync, so a directory placed here seconds ago can carry an
+    mtime from days ago; ctime is the inode's own change time and userspace cannot
+    backdate it. A trial genuinely left over from an earlier run of this job dir has
+    BOTH times old, so this weakens nothing about staleness detection -- it only stops
+    a freshly delivered trial from being libelled as stale.
     """
-    cands = [d for d in job_dir.glob("*/") if (d / "result.json").is_file()]
-    cands = [d for d in cands if d.stat().st_mtime >= since - 5]
+    out = []
+    for d in job_dir.glob("*/"):
+        try:
+            if (d / "result.json").is_file():
+                st = d.stat()
+                out.append((d, st.st_mtime, max(st.st_mtime, st.st_ctime)))
+        except OSError:
+            continue
+    return out
+
+
+def find_trial_with_staleness(job_dir: pathlib.Path,
+                              since: float) -> tuple[pathlib.Path | None, bool]:
+    """The newest trial in `job_dir`, plus whether it PREDATES this iteration.
+
+    The freshness cutoff carries `MTIME_SLACK_SECS` of slack for clock skew between
+    the launcher and the filesystem. When nothing clears `since`, the newest surviving
+    trial is still returned -- it remains diagnostically useful -- but the second
+    element is True, and a caller that scores it as this iteration's result is then
+    doing so knowingly rather than by accident.
+    """
+    cands = _trial_candidates(job_dir)
     if not cands:
-        cands = [d for d in job_dir.glob("*/") if (d / "result.json").is_file()]
-    return max(cands, key=lambda d: d.stat().st_mtime) if cands else None
+        return None, False
+    fresh = [c for c in cands if c[2] >= since - MTIME_SLACK_SECS]
+    pool = fresh or cands
+    return max(pool, key=lambda c: c[1])[0], not fresh
+
+
+def find_trial(job_dir: pathlib.Path, since: float, *,
+               allow_stale: bool = False) -> pathlib.Path | None:
+    """The trial this job just produced, or None if it produced none.
+
+    A job dir is reused across relaunches of the same `agentic_iterNN` job, so when
+    an iteration produces no trial of its own -- the agent crashed on startup, harbor
+    never launched -- the newest thing on disk belongs to an EARLIER run. Handing
+    that back indistinguishably makes the loop score a previous iteration's reward,
+    curve and parent source as this one's, turning a launch failure into a plausible
+    success. So by default a stale trial is refused, loudly.
+
+    `allow_stale=True` opts into the old behaviour for callers that want the stale
+    trial for diagnosis; `find_trial_with_staleness` returns it with an explicit
+    flag. Both stale paths warn, and the two leading positional parameters are
+    unchanged so existing `find_trial(job_dir, t0)` callers keep working.
+    """
+    trial, is_stale = find_trial_with_staleness(job_dir, since)
+    if not is_stale:
+        return trial
+    print(f"WARNING: track3.trial_io.find_trial: no trial in {job_dir} is newer than "
+          f"since={since:.0f}; the newest one ({trial}) is STALE and belongs to an "
+          f"earlier run of this job dir. "
+          + (f"Returning it anyway because allow_stale=True -- it must NOT be scored "
+             f"as this iteration's result." if allow_stale else
+             f"Returning None: this iteration produced no trial."),
+          file=sys.stderr)
+    return trial if allow_stale else None
 
 
 def task_budget_secs(task_dir: pathlib.Path) -> float | None:

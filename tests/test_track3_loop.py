@@ -22,6 +22,17 @@ a bare invocation reaches no LLM at all. `test_default_run_calls_neither_*` asse
 that directly, because a default that silently re-enables an LLM is exactly the
 regression this unwiring exists to prevent.
 
+FOUR MORE PROPERTIES are asserted below, each one a defect found in production. The
+`--timeout` must actually REACH `subprocess.run`, or the TimeoutExpired handler is
+unreachable code and a wedged container hangs the campaign forever. Containers that
+appeared during an iteration must be removed afterwards, and containers that were
+ALREADY RUNNING must not be -- `test_cleanup_removes_only_containers_that_appeared_
+this_iteration` is the one that stops a cleanup from killing a concurrent campaign's
+live GPU trial on the same host. A Ctrl-C must still leave a ledger row for whatever
+was measured. And a second `refine` on the same task must be refused outright, because
+`resolve_run_root` is a pure function of the task and two runs would otherwise share
+one ledger and one iteration counter.
+
 The reward is likewise no longer the verifier's. `read_trial` computes it from the
 fixture's own loss curve via `track3.reward`, at FULL log density: the two seeds first
 reach 3.28 at steps 3150 and 3175, so (3500-3175)/600 = 0.541666... is the number
@@ -33,9 +44,12 @@ the regression tests for that.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import shutil
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -122,21 +136,59 @@ def no_network(monkeypatch):
     )
 
 
-def fake_harbor(calls: list, *, produce_trial: bool = True, returncode: int = 0):
+@pytest.fixture(autouse=True)
+def no_real_subprocess(monkeypatch):
+    """Hard backstop: no test in this module may launch a real process.
+
+    The loop now shells out to `docker ps` around every launch and to `docker rm`
+    after it, so a test that forgets to stub `subprocess.run` would interrogate this
+    host's real daemon -- and could reach a real removal. Every test that needs a
+    process overrides this with its own double.
+    """
+    from track3 import loop
+
+    def _boom(cmd, *a, **k):  # pragma: no cover - only runs if a stub is missing
+        raise AssertionError(f"test attempted to launch a real process: {cmd}")
+
+    monkeypatch.setattr(loop.subprocess, "run", _boom)
+
+
+def fake_harbor(calls: list, *, produce_trial: bool = True, returncode: int = 0,
+                docker_calls: list | None = None, ps_outputs: list | None = None):
     """Stand-in for `harbor run` that mimics the one behaviour the loop depends on.
 
     Like the real binary it reads the config file off its own argv rather than
     receiving state out of band, which is what lets the tests assert on what was
     actually written to disk instead of on what the loop intended to write.
+
+    It also stands in for the `docker` binary, because the loop now snapshots the
+    running `task__*` containers around each launch so it can clean up the ones it
+    created. Docker invocations are recorded in `docker_calls`, NOT in `calls`, so
+    every existing assertion about `calls[0]` still means "the harbor launch".
+    `ps_outputs` is the stdout handed back to successive `docker ps` calls -- by
+    default an empty host, so no container is ever seen to appear and nothing is
+    removed.
     """
+    ps = list(ps_outputs or [])
 
     def _run(cmd, **kwargs):
-        calls.append({"cmd": [str(c) for c in cmd], "kwargs": kwargs})
+        argv = [str(c) for c in cmd]
+        if argv and Path(argv[0]).name == "docker":
+            if docker_calls is not None:
+                docker_calls.append(argv)
+            out = ps.pop(0) if (argv[1:2] == ["ps"] and ps) else ""
+            return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+        calls.append({"cmd": argv, "kwargs": kwargs})
         cfg = json.loads(Path(cmd[cmd.index("--config") + 1]).read_text())
         if produce_trial:
             dest = Path(cfg["jobs_dir"]) / cfg["job_name"] / "trial-1"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(FIXTURE_TRIAL, dest)
+            # copytree copies the fixture's mtime too, which is as old as the
+            # checkout. `trial_io.find_trial` refuses a trial older than the launch
+            # as belonging to an earlier run, so without this the fake harbor
+            # "produces" a trial that the loop correctly ignores.
+            os.utime(dest, None)
         return subprocess.CompletedProcess(cmd, returncode, stdout="", stderr="")
 
     return _run
@@ -149,6 +201,9 @@ def _never_called(what: str):
     return _boom
 
 
+FAKE_HARBOR_KWARGS = ("produce_trial", "returncode", "docker_calls", "ps_outputs")
+
+
 def iterate(monkeypatch, i, base_cfg, history, tmp_path, task_dir, **kw):
     """Run one iteration against the fake harbor; return (row, recorded calls)."""
     from track3 import loop
@@ -156,7 +211,7 @@ def iterate(monkeypatch, i, base_cfg, history, tmp_path, task_dir, **kw):
     calls: list = []
     monkeypatch.setattr(
         loop.subprocess, "run", fake_harbor(calls, **{k: kw.pop(k) for k in
-                                                      ("produce_trial", "returncode")
+                                                      FAKE_HARBOR_KWARGS
                                                       if k in kw})
     )
     row = run_iteration(
@@ -634,6 +689,751 @@ def test_harbor_timeout_is_recorded_rather_than_raised(
                         harbor_bin="/nonexistent/harbor", timeout=1)
     assert row["outcome"] == "harness_incomplete"
     assert row["harbor_returncode"] == 124
+
+
+# --------------------------------------------------------------------------- #
+# TIMEOUT -- the handler is only worth having if something can reach it
+# --------------------------------------------------------------------------- #
+
+
+def test_timeout_defaults_to_none_at_every_layer(monkeypatch, task_dir, tmp_path):
+    """No limit unless asked for -- a legitimate multi-hour GPU job must not be killed."""
+    import inspect
+
+    from track3 import loop
+
+    for fn in (run_iteration, refine):
+        assert inspect.signature(fn).parameters["timeout"].default is None, fn.__name__
+
+    calls: list = []
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor(calls))
+    refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+    assert calls[0]["kwargs"]["timeout"] is None
+
+
+def test_refine_threads_the_timeout_into_subprocess(monkeypatch, task_dir, tmp_path):
+    from track3 import loop
+
+    calls: list = []
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor(calls))
+    refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor", timeout=45)
+    assert calls[0]["kwargs"]["timeout"] == 45
+
+
+def test_main_timeout_flag_reaches_subprocess_run(monkeypatch, task_dir, tmp_path):
+    """The whole point of DEFECT 1: `--timeout 30` must arrive at `subprocess.run`.
+
+    Before this, `run_iteration` had the parameter and the handler but nothing on the
+    path from the CLI ever passed it, so `timeout=None` was the only value harbor was
+    ever launched with and the TimeoutExpired handler was unreachable code.
+    """
+    from track3 import loop
+
+    calls: list = []
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor(calls))
+
+    rc = main(["--task", str(task_dir), "--iterations", "1", "--timeout", "30",
+               "--harbor-bin", "/nonexistent/harbor"])
+
+    assert rc == 0
+    assert calls[0]["kwargs"]["timeout"] == 30.0
+    assert isinstance(calls[0]["kwargs"]["timeout"], float)
+
+
+def test_timeout_flag_accepts_fractional_seconds(monkeypatch, task_dir, tmp_path):
+    from track3 import loop
+
+    calls: list = []
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor(calls))
+    main(["--task", str(task_dir), "--iterations", "1", "--timeout", "0.5",
+          "--harbor-bin", "/nonexistent/harbor"])
+    assert calls[0]["kwargs"]["timeout"] == 0.5
+
+
+def test_timeout_help_states_the_default_explicitly():
+    """"default: None" has to be in the help text; an invisible default is a trap."""
+    from track3 import loop
+
+    help_text = loop.build_parser().format_help()
+    assert "--timeout" in help_text
+    idx = help_text.rindex("--timeout")  # the options block, not the usage line
+    blurb = help_text[idx:idx + 400].lower()
+    assert "no limit" in blurb or "no timeout" in blurb
+    assert "default" in blurb
+
+
+def test_timeout_through_refine_records_124_and_does_not_propagate(
+    monkeypatch, task_dir, tmp_path
+):
+    """A wedged container must end as a ledger row, not as a hung campaign."""
+    from track3 import loop
+
+    def _timeout(cmd, **kwargs):
+        if Path(str(cmd[0])).name == "docker":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout") or 1)
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _timeout)
+
+    rows = refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor",
+                  timeout=1)
+
+    assert len(rows) == 1
+    assert rows[0]["harbor_returncode"] == 124
+    written = load_ledger(tmp_path / "ledger.jsonl")
+    assert len(written) == 1
+    assert written[0]["harbor_returncode"] == 124
+
+
+# --------------------------------------------------------------------------- #
+# CONTAINER CLEANUP -- harbor's containers outlive the harbor process
+# --------------------------------------------------------------------------- #
+
+
+def _docker_rm_args(docker_calls: list) -> list:
+    """Every container id handed to a `docker rm`, flattened."""
+    ids: list = []
+    for argv in docker_calls:
+        if "rm" in argv:
+            ids.extend(a for a in argv[argv.index("rm") + 1:]
+                       if not a.startswith("-"))
+    return ids
+
+
+def test_cleanup_removes_only_containers_that_appeared_this_iteration(
+    monkeypatch, base_cfg, tmp_path, task_dir
+):
+    """THE production-safety property. A blanket `docker rm` of task__* would kill a
+    concurrent campaign's live GPU containers on this host, so only the difference
+    between the before and after snapshots may ever be removed.
+    """
+    docker_calls: list = []
+    row, _ = iterate(
+        monkeypatch, 1, base_cfg, "", tmp_path, task_dir,
+        docker_calls=docker_calls,
+        ps_outputs=["someone_elses_run\n",
+                    "someone_elses_run\nmine_main\nmine_sidecar\n"],
+    )
+
+    removed = _docker_rm_args(docker_calls)
+    assert sorted(removed) == ["mine_main", "mine_sidecar"]
+    assert "someone_elses_run" not in removed
+    assert all("someone_elses_run" not in argv for argv in docker_calls
+               if "rm" in argv)
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
+
+
+def test_cleanup_snapshots_before_and_after_the_launch(
+    monkeypatch, base_cfg, tmp_path, task_dir
+):
+    docker_calls: list = []
+    iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir,
+            docker_calls=docker_calls)
+
+    ps = [argv for argv in docker_calls if argv[1:2] == ["ps"]]
+    assert len(ps) == 2
+    for argv in ps:
+        assert "-q" in argv
+        assert "--filter" in argv
+        assert argv[argv.index("--filter") + 1] == "name=task__"
+
+
+def test_cleanup_removes_nothing_when_no_container_appeared(
+    monkeypatch, base_cfg, tmp_path, task_dir
+):
+    """An unchanged host must produce no `docker rm` at all, not `docker rm` of nothing."""
+    docker_calls: list = []
+    iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir,
+            docker_calls=docker_calls,
+            ps_outputs=["untouched_a\nuntouched_b\n", "untouched_a\nuntouched_b\n"])
+
+    assert _docker_rm_args(docker_calls) == []
+
+
+def test_cleanup_failure_does_not_lose_the_row(
+    monkeypatch, base_cfg, tmp_path, task_dir
+):
+    """A cleanup failure costs some disk. Losing the row costs the GPU hours."""
+    from track3 import loop
+
+    inner = fake_harbor([], ps_outputs=["", "leaked_one\n"])
+
+    def _run(cmd, **kwargs):
+        argv = [str(c) for c in cmd]
+        if argv[:2] == ["docker", "rm"]:
+            raise OSError("docker daemon exploded")
+        return inner(cmd, **kwargs)
+
+    monkeypatch.setattr(loop.subprocess, "run", _run)
+    row = run_iteration(1, base_cfg, "", run_root=tmp_path, task_dir=task_dir,
+                        harbor_bin="/nonexistent/harbor")
+
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
+    assert row["outcome"] == "graded_pass"
+
+
+def test_missing_docker_binary_is_skipped_silently(
+    monkeypatch, base_cfg, tmp_path, task_dir, capsys
+):
+    """A host that only rehearses the loop has no docker; that is not an error."""
+    from track3 import loop
+
+    inner = fake_harbor([])
+
+    def _run(cmd, **kwargs):
+        if Path(str(cmd[0])).name == "docker":
+            raise FileNotFoundError(2, "No such file or directory: 'docker'")
+        return inner(cmd, **kwargs)
+
+    monkeypatch.setattr(loop.subprocess, "run", _run)
+    row = run_iteration(1, base_cfg, "", run_root=tmp_path, task_dir=task_dir,
+                        harbor_bin="/nonexistent/harbor")
+
+    assert row["reward"] == pytest.approx(FIXTURE_REWARD)
+    assert "docker" not in capsys.readouterr().err.lower()
+
+
+def test_cleanup_runs_even_when_harbor_times_out(
+    monkeypatch, base_cfg, tmp_path, task_dir
+):
+    """The timed-out case is exactly the case that leaves a container behind."""
+    from track3 import loop
+
+    docker_calls: list = []
+    ps = ["", "wedged_main\n"]
+
+    def _run(cmd, **kwargs):
+        argv = [str(c) for c in cmd]
+        if Path(argv[0]).name == "docker":
+            docker_calls.append(argv)
+            out = ps.pop(0) if (argv[1:2] == ["ps"] and ps) else ""
+            return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    monkeypatch.setattr(loop.subprocess, "run", _run)
+    row = run_iteration(1, base_cfg, "", run_root=tmp_path, task_dir=task_dir,
+                        harbor_bin="/nonexistent/harbor", timeout=1)
+
+    assert row["harbor_returncode"] == 124
+    assert _docker_rm_args(docker_calls) == ["wedged_main"]
+
+
+# --------------------------------------------------------------------------- #
+# CTRL-C -- an iteration that consumed GPU time must leave a trace
+# --------------------------------------------------------------------------- #
+
+
+def _interrupting_harbor(docker_calls=None, ps_outputs=None, produce_trial=True):
+    """Harbor that does the work, then dies to a Ctrl-C before it can return."""
+    inner = fake_harbor([], produce_trial=produce_trial,
+                        docker_calls=docker_calls, ps_outputs=ps_outputs)
+
+    def _run(cmd, **kwargs):
+        argv = [str(c) for c in cmd]
+        if Path(argv[0]).name == "docker":
+            return inner(cmd, **kwargs)
+        inner(cmd, **kwargs)
+        raise KeyboardInterrupt("ctrl-c")
+
+    return _run
+
+
+def test_keyboardinterrupt_still_writes_the_ledger_row_then_reraises(
+    monkeypatch, task_dir, tmp_path
+):
+    """The row is appended AFTER run_iteration returns, so a Ctrl-C used to lose a
+    completed multi-hour trial outright. Whatever was measured must reach the ledger.
+    """
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _interrupting_harbor())
+
+    with pytest.raises(KeyboardInterrupt):
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    written = load_ledger(tmp_path / "ledger.jsonl")
+    assert len(written) == 1
+    assert written[0]["iteration"] == 1
+    assert written[0]["reward"] == pytest.approx(FIXTURE_REWARD)
+    assert written[0]["interrupted"] is True
+    assert written[0]["harbor_returncode"] == loop.INTERRUPT_RETURNCODE
+
+
+def test_keyboardinterrupt_with_no_trial_still_writes_a_sparse_row(
+    monkeypatch, task_dir, tmp_path
+):
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run",
+                        _interrupting_harbor(produce_trial=False))
+
+    with pytest.raises(KeyboardInterrupt):
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    written = load_ledger(tmp_path / "ledger.jsonl")
+    assert len(written) == 1
+    assert written[0]["outcome"] == "harness_incomplete"
+    assert written[0]["interrupted"] is True
+
+
+def test_keyboardinterrupt_cleans_up_the_containers_it_started(
+    monkeypatch, task_dir, tmp_path
+):
+    """Ctrl-C is the orphan case: harbor dies, its containers do not."""
+    from track3 import loop
+
+    docker_calls: list = []
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _interrupting_harbor(
+        docker_calls=docker_calls, ps_outputs=["other\n", "other\norphan\n"]))
+
+    with pytest.raises(KeyboardInterrupt):
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    assert _docker_rm_args(docker_calls) == ["orphan"]
+
+
+def test_keyboardinterrupt_stops_the_campaign_rather_than_continuing(
+    monkeypatch, task_dir, tmp_path
+):
+    """Ctrl-C means stop: iteration 2 must never launch."""
+    from track3 import loop
+
+    launches: list = []
+    inner = _interrupting_harbor()
+
+    def _run(cmd, **kwargs):
+        if Path(str(cmd[0])).name != "docker":
+            launches.append(cmd)
+        return inner(cmd, **kwargs)
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _run)
+
+    with pytest.raises(KeyboardInterrupt):
+        refine(str(task_dir), iterations=3, harbor_bin="/nonexistent/harbor")
+
+    assert len(launches) == 1
+    assert len(load_ledger(tmp_path / "ledger.jsonl")) == 1
+
+
+# --------------------------------------------------------------------------- #
+# CONCURRENCY -- one writer per run root
+# --------------------------------------------------------------------------- #
+
+
+@contextmanager
+def hold_lock(run_root: Path):
+    """Hold the run root's flock the way a second live campaign would.
+
+    A separate open file description, so the kernel treats it as a separate holder
+    even though it is the same process -- which is exactly what makes the contention
+    testable without spawning anything.
+    """
+    run_root.mkdir(parents=True, exist_ok=True)
+    fd = os.open(run_root / ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
+def test_second_concurrent_refine_is_refused_with_a_clear_error(
+    monkeypatch, task_dir, tmp_path
+):
+    """`resolve_run_root` is a pure function of the task, so two runs of the same task
+    share run_root, ledger.jsonl, `start = len(rows)+1`, job_name and .cfg_iterNN.json.
+    Left unguarded they interleave and corrupt each other's numbering.
+    """
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _never_called("harbor"))
+
+    with hold_lock(tmp_path), pytest.raises(loop.RunRootBusy) as exc:
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    message = str(exc.value)
+    assert str(task_dir) in message or task_dir.name in message
+    assert str(tmp_path) in message
+    assert "already" in message.lower() or "another" in message.lower()
+
+
+def test_a_busy_run_root_launches_nothing_and_writes_nothing(
+    monkeypatch, task_dir, tmp_path
+):
+    """Refusal must happen before any side effect, or the guard is theatre."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _never_called("harbor"))
+    _seed_ledger(tmp_path / "ledger.jsonl", 2)
+
+    with hold_lock(tmp_path), pytest.raises(loop.RunRootBusy):
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    assert len(load_ledger(tmp_path / "ledger.jsonl")) == 2
+    assert not (tmp_path / ".cfg_iter03.json").exists()
+
+
+def test_lock_is_released_when_refine_returns(monkeypatch, task_dir, tmp_path):
+    """A lock that outlives its run turns a resumable campaign into a dead one."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+
+    refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    with hold_lock(tmp_path):
+        pass
+
+    rows = refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+    assert [r["iteration"] for r in rows] == [1, 2]
+
+
+def test_lock_is_released_when_the_iteration_is_interrupted(
+    monkeypatch, task_dir, tmp_path
+):
+    """Ctrl-C must not leave the task unrunnable until someone finds the lock file."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _interrupting_harbor())
+
+    with pytest.raises(KeyboardInterrupt):
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    with hold_lock(tmp_path):
+        pass
+
+
+def test_lock_is_released_when_the_iteration_raises(monkeypatch, task_dir, tmp_path):
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop, "run_iteration",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError):
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    with hold_lock(tmp_path):
+        pass
+
+
+def test_the_lock_file_lives_in_the_run_root(monkeypatch, task_dir, tmp_path):
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+
+    refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    assert (tmp_path / ".lock").is_file()
+
+
+def test_two_different_tasks_do_not_block_each_other(monkeypatch, task_dir, tmp_path):
+    """The lock is per run root. Serialising unrelated campaigns would be a new bug."""
+    from track3 import loop
+
+    other = tmp_path / "other-task"
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: other)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+
+    with hold_lock(tmp_path / "this-task"):
+        rows = refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    assert len(rows) == 1
+
+
+# --------------------------------------------------------------------------- #
+# LEDGER INTEGRITY -- a torn row must be impossible, and never silent
+# --------------------------------------------------------------------------- #
+
+
+def test_load_ledger_names_the_line_number_of_a_malformed_line(tmp_path, capsys):
+    """Silence is the actual bug. A dropped row loses a GPU-expensive iteration AND
+    renumbers every later one, because `start = len(rows)+1` counts what survived.
+    """
+    p = tmp_path / "ledger.jsonl"
+    p.write_text(
+        '{"iteration": 1, "reward": 0.5}\n'
+        '{"iteration": 2, "rew\n'
+        '{"iteration": 3, "reward": 0.7}\n'
+    )
+
+    rows = load_ledger(p)
+
+    assert [r["iteration"] for r in rows] == [1, 3]
+    err = capsys.readouterr().err
+    assert ":2" in err
+    assert "ledger.jsonl" in err
+
+
+def test_load_ledger_counts_every_dropped_line(tmp_path, capsys):
+    p = tmp_path / "ledger.jsonl"
+    p.write_text(
+        '{"iteration": 1}\n'
+        "torn\n"
+        '{"iteration": 2}\n'
+        '{"itera\n'
+    )
+
+    rows = load_ledger(p)
+
+    assert len(rows) == 2
+    err = capsys.readouterr().err
+    assert ":2" in err and ":4" in err
+    assert "2" in err
+
+
+def test_load_ledger_warns_about_a_line_that_is_not_an_object(tmp_path, capsys):
+    """Valid JSON that is not a row is still a lost row."""
+    p = tmp_path / "ledger.jsonl"
+    p.write_text('{"iteration": 1}\n[1, 2, 3]\n')
+
+    assert len(load_ledger(p)) == 1
+    assert ":2" in capsys.readouterr().err
+
+
+def test_load_ledger_is_silent_on_a_clean_ledger(tmp_path, capsys):
+    """No crying wolf: blank lines are normal and must not produce a warning."""
+    p = tmp_path / "ledger.jsonl"
+    p.write_text('{"iteration": 1}\n\n{"iteration": 2}\n')
+
+    assert len(load_ledger(p)) == 2
+    assert capsys.readouterr().err == ""
+
+
+def _write_spy(monkeypatch, needle: bytes):
+    """Record every os.write whose payload contains `needle`, and pass it through."""
+    from track3 import loop
+
+    seen: list = []
+    real = os.write
+
+    def _spy(fd, data):
+        if needle in bytes(data):
+            seen.append(bytes(data))
+        return real(fd, data)
+
+    monkeypatch.setattr(loop.os, "write", _spy)
+    return seen
+
+
+def test_ledger_row_is_written_in_a_single_write_call(monkeypatch, tmp_path):
+    """POSIX append is atomic only up to PIPE_BUF, and only per write() call.
+
+    A row split across two writes can interleave with a concurrent appender and tear,
+    so the whole line must leave in one syscall.
+    """
+    from track3 import loop
+
+    seen = _write_spy(monkeypatch, b'"iteration"')
+    row = {"iteration": 1, "parent_source": "x" * 18000, "reward": 0.5}
+    loop._append_row(tmp_path / "ledger.jsonl", row)
+
+    assert len(seen) == 1
+    assert seen[0].endswith(b"\n")
+    assert len(seen[0]) > 18000
+
+
+def test_a_row_far_larger_than_pipe_buf_round_trips(tmp_path):
+    """`parent_source` carries up to 18000 chars, well past the 4096-byte guarantee."""
+    from track3 import loop
+
+    ledger = tmp_path / "ledger.jsonl"
+    row = {"iteration": 1, "parent_source": "y" * 18000, "reward": 0.5}
+    loop._append_row(ledger, row)
+    loop._append_row(ledger, {"iteration": 2, "reward": 0.25})
+
+    written = load_ledger(ledger)
+    assert len(ledger.read_bytes()) > 4096
+    assert [r["iteration"] for r in written] == [1, 2]
+    assert written[0]["parent_source"] == "y" * 18000
+
+
+def test_append_is_durable_before_it_returns(monkeypatch, tmp_path):
+    """The next iteration's crash must not take the previous row's write cache with it."""
+    from track3 import loop
+
+    fsynced: list = []
+    real = os.fsync
+    monkeypatch.setattr(loop.os, "fsync",
+                        lambda fd: (fsynced.append(fd), real(fd))[1])
+
+    loop._append_row(tmp_path / "ledger.jsonl", {"iteration": 1})
+
+    assert fsynced
+
+
+def test_append_appends_rather_than_truncating(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    _seed_ledger(ledger, 2)
+    from track3 import loop
+
+    loop._append_row(ledger, {"iteration": 3, "reward": 0.9})
+
+    assert [r["iteration"] for r in load_ledger(ledger)] == [1, 2, 3]
+
+
+def test_the_append_is_serialised_by_the_run_root_lock(
+    monkeypatch, task_dir, tmp_path
+):
+    """Atomicity of one write is only half of it: the lock is what makes the writers
+    a single writer. Proven from inside a live iteration, where a second campaign
+    would be trying to append.
+    """
+    from track3 import loop
+
+    contended: list = []
+    inner = fake_harbor([])
+
+    def _run(cmd, **kwargs):
+        if Path(str(cmd[0])).name != "docker":
+            fd = os.open(tmp_path / ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                contended.append("acquired")
+            except OSError:
+                contended.append("refused")
+            finally:
+                os.close(fd)
+        return inner(cmd, **kwargs)
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _run)
+
+    refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor")
+
+    assert contended == ["refused"]
+
+
+# --------------------------------------------------------------------------- #
+# JOB PRUNING -- opt-in, because the default may never delete a GPU artifact
+# --------------------------------------------------------------------------- #
+
+
+def _seed_jobs(jobs_dir: Path, n: int) -> list[Path]:
+    """`n` job dirs aged oldest-first, so "newest" is a fact and not a race."""
+    made = []
+    for i in range(1, n + 1):
+        d = jobs_dir / f"agentic_iter{i:02d}" / "trial-1"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "result.json").write_text("{}")
+        os.utime(d.parent, (1_000_000 + i * 60, 1_000_000 + i * 60))
+        made.append(d.parent)
+    return made
+
+
+def _run_with_jobs(monkeypatch, task_dir, tmp_path, prior=3, **kw):
+    """Resume a campaign that already has `prior` job dirs on disk, and run one more."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    _seed_ledger(tmp_path / "ledger.jsonl", prior)
+    _seed_jobs(tmp_path / "jobs", prior)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+    refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor", **kw)
+    return tmp_path / "jobs"
+
+
+def test_nothing_is_pruned_by_default(monkeypatch, task_dir, tmp_path):
+    """Deleting a GPU trial nobody asked to delete is worse than a full disk."""
+    jobs = _run_with_jobs(monkeypatch, task_dir, tmp_path)
+
+    assert sorted(d.name for d in jobs.iterdir()) == [
+        "agentic_iter01", "agentic_iter02", "agentic_iter03", "agentic_iter04"]
+
+
+def test_keep_jobs_deletes_only_the_older_dirs(monkeypatch, task_dir, tmp_path):
+    jobs = _run_with_jobs(monkeypatch, task_dir, tmp_path, keep_jobs=2)
+
+    assert sorted(d.name for d in jobs.iterdir()) == [
+        "agentic_iter03", "agentic_iter04"]
+
+
+def test_keep_jobs_never_deletes_the_dir_just_produced(
+    monkeypatch, task_dir, tmp_path
+):
+    """The newest artifact is the one the operator is about to look at."""
+    jobs = _run_with_jobs(monkeypatch, task_dir, tmp_path, keep_jobs=1)
+
+    assert [d.name for d in jobs.iterdir()] == ["agentic_iter04"]
+    assert (jobs / "agentic_iter04" / "trial-1" / "result.json").is_file()
+
+
+def test_keep_jobs_larger_than_the_backlog_deletes_nothing(
+    monkeypatch, task_dir, tmp_path
+):
+    jobs = _run_with_jobs(monkeypatch, task_dir, tmp_path, keep_jobs=99)
+
+    assert len(list(jobs.iterdir())) == 4
+
+
+def test_pruning_failure_is_not_fatal_and_keeps_the_row(
+    monkeypatch, task_dir, tmp_path
+):
+    """A full or read-only disk must not turn a completed iteration into an exception."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop.shutil, "rmtree",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+    jobs = _run_with_jobs(monkeypatch, task_dir, tmp_path, keep_jobs=1)
+
+    assert len(list(jobs.iterdir())) == 4
+    assert len(load_ledger(tmp_path / "ledger.jsonl")) == 4
+
+
+def test_an_interrupted_iteration_prunes_nothing(monkeypatch, task_dir, tmp_path):
+    """Ctrl-C is not consent to delete artifacts."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    _seed_ledger(tmp_path / "ledger.jsonl", 3)
+    _seed_jobs(tmp_path / "jobs", 3)
+    monkeypatch.setattr(loop.subprocess, "run", _interrupting_harbor())
+
+    with pytest.raises(KeyboardInterrupt):
+        refine(str(task_dir), iterations=1, harbor_bin="/nonexistent/harbor",
+               keep_jobs=1)
+
+    assert len(list((tmp_path / "jobs").iterdir())) == 4
+
+
+def test_main_keep_jobs_flag_prunes(monkeypatch, task_dir, tmp_path):
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    _seed_ledger(tmp_path / "ledger.jsonl", 3)
+    _seed_jobs(tmp_path / "jobs", 3)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+
+    rc = main(["--task", str(task_dir), "--iterations", "1", "--keep-jobs", "2",
+               "--harbor-bin", "/nonexistent/harbor"])
+
+    assert rc == 0
+    assert sorted(d.name for d in (tmp_path / "jobs").iterdir()) == [
+        "agentic_iter03", "agentic_iter04"]
+
+
+def test_keep_jobs_help_states_that_the_default_deletes_nothing():
+    from track3 import loop
+
+    help_text = loop.build_parser().format_help()
+    idx = help_text.rindex("--keep-jobs")  # the options block, not the usage line
+    blurb = help_text[idx:idx + 400].lower()
+    assert "default" in blurb
+    assert "keep" in blurb and ("all" in blurb or "nothing" in blurb)
 
 
 # --------------------------------------------------------------------------- #

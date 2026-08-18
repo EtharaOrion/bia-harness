@@ -22,7 +22,7 @@ only the defaults flipped to False. Re-enable per call by passing True, or from 
 CLI with the opt-IN `--summarise` / `--judge` flags. Everything in the DURABILITY note
 below therefore still applies verbatim the moment either is switched back on.
 
-Three properties are load-bearing, and each one exists because its absence cost a
+Six properties are load-bearing, and each one exists because its absence cost a
 real run.
 
 DURABILITY. The judge and the summariser are ADVISORY. Neither can move a reward,
@@ -43,6 +43,34 @@ where it stopped with no separate bookkeeping file to fall out of sync.
 ISOLATION. `jobs_dir` resolves under this harness's `runs/track3/<task-uuid>/`, never
 into the read-only 65GB track3-pipeline tree the port came from.
 
+TERMINATION. `--timeout` bounds a single harbor job and is threaded all the way to
+`subprocess.run`; a wedged container is recorded as returncode 124 (GNU `timeout(1)`'s
+convention) and the campaign moves on instead of hanging forever with no output.
+
+CLEANUP. Harbor's docker containers are NOT children of the harbor process, so a
+timeout or a Ctrl-C leaves them holding GPUs. Each iteration snapshots the running
+`task__*` containers before and after its launch and force-removes the DIFFERENCE in a
+`finally`. Only the difference, ever: this host runs concurrent campaigns, and a
+blanket removal by name filter would kill someone else's live trial. Ctrl-C likewise
+still writes the row for what was already measured before it re-raises -- an iteration
+that consumed GPU time must leave a trace.
+
+EXCLUSION. `resolve_run_root` is a pure function of the task, so two concurrent
+`refine` calls on one task would share run_root, ledger.jsonl, the `start` each
+derives from it, job_name and .cfg_iterNN.json, and interleave into each other. The
+whole call therefore runs under an exclusive `flock` on `run_root/.lock`, which also
+serialises ledger appends -- each of which is one `os.write` of a whole line, because
+POSIX only guarantees an atomic append up to PIPE_BUF and a row carries up to 18000
+chars of `parent_source`. A line that is damaged anyway is reported by line number
+rather than skipped in silence: a dropped row loses an iteration AND renumbers every
+one after it.
+
+Job artifacts are the one thing this module will delete, and only on request:
+`--keep-jobs N` prunes all but the newest N `jobs/agentic_iterNN/` dirs after a
+successful iteration, never the one just produced, never on the interrupted path, and
+never at all unless the flag is passed. Silently deleting a GPU trial would be a worse
+failure than the full disk it prevents.
+
 DIVERGENCES FROM THE SOURCE. The original resolves ROOT/RUNS/TASK/HARBOR through
 module globals and takes `--config` as a path to a hand-written JSON file. This
 harness is multi-task, so `run_root`, `task_dir` and `harbor_bin` are parameters and
@@ -53,10 +81,14 @@ being trusted from disk. `--export-traces` is also passed explicitly here; see
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,13 +106,92 @@ from track3.harbor_config import (  # noqa: E402
 from track3.history import render_history  # noqa: E402
 from track3.trial_io import agent_findings, find_trial, read_trial, task_budget_hours  # noqa: E402
 
-__all__ = ["judge_trajectory", "load_ledger", "main", "refine", "run_iteration"]
+__all__ = ["IterationInterrupted", "RunRootBusy", "build_parser", "judge_trajectory",
+           "load_ledger", "main", "refine", "run_iteration"]
 
 # Exit code recorded when harbor is killed by our own timeout. 124 is what GNU
 # `timeout(1)` reports, so a ledger reader needs no harness-specific convention.
 TIMEOUT_RETURNCODE = 124
 
+# 128 + SIGINT, the shell's convention for a process killed by Ctrl-C.
+INTERRUPT_RETURNCODE = 130
+
 MAX_ERROR_CHARS = 200
+
+# Harbor derives its container names from the trial, e.g.
+# `task__<id>__env-main-1` and `task__<id>__env-harbor-docker-egress-control-sidecar-1`.
+CONTAINER_NAME_FILTER = "name=task__"
+
+# Cleanup is best-effort bookkeeping around a multi-hour job; it may not become the
+# thing that hangs it.
+DOCKER_CMD_TIMEOUT = 30
+
+
+class IterationInterrupted(KeyboardInterrupt):
+    """Ctrl-C during a job, carrying the row measured up to that point.
+
+    Subclasses KeyboardInterrupt so that a caller which does not know about it still
+    sees the interrupt it asked for; `refine` catches it only to get the row onto
+    disk before letting it continue upward.
+    """
+
+    def __init__(self, row: dict):
+        super().__init__("iteration interrupted")
+        self.row = row
+
+
+class RunRootBusy(RuntimeError):
+    """Another process already holds this task's run root."""
+
+
+def _docker_task_containers() -> set[str] | None:
+    """Ids of the running `task__*` containers, or None if docker cannot be asked.
+
+    None and the empty set mean different things and must not be conflated: an empty
+    set is evidence that nothing was running, while None is the absence of evidence,
+    and only evidence may authorise a removal.
+    """
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "-q", "--filter", CONTAINER_NAME_FILTER],
+            capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    except Exception:  # noqa: BLE001 - no docker, no daemon, no permission, hung cli
+        return None
+    if proc.returncode != 0:
+        return None
+    return {ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()}
+
+
+def _remove_new_containers(before: set[str] | None, job_name: str) -> None:
+    """Remove the containers that appeared while this iteration ran, and only those.
+
+    Harbor's containers outlive the `harbor` process, so a timeout or a Ctrl-C
+    orphans them holding GPUs. The difference between the two snapshots is the whole
+    safety argument: a blanket `docker rm` of the `task__*` name filter would also
+    kill a CONCURRENT campaign's live containers on this host, so a container that
+    was already running before we launched is never touched -- and if the "before"
+    snapshot could not be taken at all, nothing is removed.
+
+    Every failure here is swallowed. Leaked containers cost disk and GPUs; a raised
+    exception costs the iteration that just ran for hours.
+    """
+    if before is None:
+        return
+    try:
+        after = _docker_task_containers()
+        if after is None:
+            return
+        appeared = sorted(after - before)
+        if not appeared:
+            return
+        print(f"  [cleanup] removing {len(appeared)} container(s) started by "
+              f"{job_name}", file=sys.stderr, flush=True)
+        subprocess.run(["docker", "rm", "-f", *appeared],
+                       capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] container cleanup failed (containers may be leaked): "
+              f"{type(exc).__name__}: {str(exc)[:MAX_ERROR_CHARS]}",
+              file=sys.stderr, flush=True)
 
 
 def utc() -> str:
@@ -95,21 +206,138 @@ def load_ledger(ledger_path) -> list[dict]:
     write leaves a truncated final line, and refusing to parse the file at that point
     would strand every completed iteration before it. Order is file order, because
     that is iteration order.
+
+    But skipping LOUDLY, naming the line. Skipping in silence was the real defect: a
+    dropped row is a lost GPU-expensive iteration, and because `start = len(rows)+1`
+    counts only what survived, it also silently renumbers every iteration after it --
+    so the damage is invisible in the very file you would look at to find it.
     """
     path = Path(ledger_path)
     if not path.is_file():
         return []
-    rows = []
-    for line in path.read_text(errors="replace").splitlines():
+    rows: list[dict] = []
+    dropped = 0
+    for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
         if not line.strip():
             continue
         try:
             row = json.loads(line)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            dropped += 1
+            print(f"  [warn] {path}:{lineno}: unreadable ledger line SKIPPED "
+                  f"({type(exc).__name__}); {len(line)} chars beginning "
+                  f"{line[:80]!r}", file=sys.stderr, flush=True)
             continue
         if isinstance(row, dict):
             rows.append(row)
+        else:
+            dropped += 1
+            print(f"  [warn] {path}:{lineno}: ledger line SKIPPED, expected a JSON "
+                  f"object and got {type(row).__name__}", file=sys.stderr, flush=True)
+    if dropped:
+        print(f"  [warn] {path}: {dropped} line(s) skipped, {len(rows)} row(s) "
+              f"recovered. Iteration numbering is derived from the surviving rows, "
+              f"so a skipped row shifts every iteration after it -- check the file "
+              f"before continuing the campaign.", file=sys.stderr, flush=True)
     return rows
+
+
+@contextmanager
+def run_root_lock(run_root: Path, task_desc: str):
+    """Hold this run root exclusively for the duration of a campaign.
+
+    `resolve_run_root` is a pure function of the task, so two concurrent `refine`
+    calls on one task share run_root, ledger.jsonl, the `start = len(rows)+1` they
+    each derive from it, job_name and .cfg_iterNN.json -- and interleave into each
+    other's numbering and configs.
+
+    There is deliberately NO --force. flock is held by an open file description, so
+    the kernel drops it the moment the holder dies for any reason, including SIGKILL
+    and a power cut: a lock that is still held is evidence of a LIVE run, never of a
+    stale one. --force could therefore only ever override a genuinely running
+    campaign, reinstating exactly the corruption this exists to prevent. If a lock
+    ever does look stuck, `fuser run_root/.lock` names the process that holds it.
+    """
+    lock_path = Path(run_root) / ".lock"
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise RunRootBusy(
+                f"another refine run is already active for task {task_desc}: "
+                f"{lock_path} is locked. Two runs of one task share its run root "
+                f"({run_root}), its ledger and its iteration numbering, so this one "
+                f"is refused. Wait for the other run to finish, or check it with "
+                f"`fuser {lock_path}`."
+            ) from exc
+        try:
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()} {utc()}\n".encode())
+            yield lock_path
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _append_row(ledger: Path, row: dict) -> None:
+    """Append one row so that it can never be observed half-written.
+
+    A row carries up to 18000 chars of `parent_source`, and POSIX guarantees an
+    O_APPEND write is atomic only up to PIPE_BUF (4096 bytes) -- so the buffered
+    `f.write()` this replaces could split a row across two writes and interleave with
+    another appender. Two things prevent that here: the whole line leaves in a single
+    `os.write` (the loop only ever repeats on a short write, which O_APPEND makes
+    vanishingly rare), and every writer holds the run root lock (`run_root_lock`),
+    which serialises them regardless of size. The fsync is for the other half of the
+    problem: a row still sitting in the page cache when the machine dies did not
+    survive the iteration it was meant to record.
+    """
+    payload = (json.dumps(row, sort_keys=True, default=str) + "\n").encode()
+    fd = os.open(ledger, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        view = memoryview(payload)
+        while view:
+            view = view[os.write(fd, view):]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _prune_jobs(jobs_dir, keep: int | None, *, protect: str) -> None:
+    """Keep the newest `keep` job dirs and delete the rest. `None` deletes nothing.
+
+    Harbor trial artifacts are gigabytes per GPU trial and accumulate forever, and a
+    full disk crashes the next iteration's writes. But this deletes measured results,
+    so it happens only when asked for, only after the row it belongs to is durably on
+    disk, and never to the dir this iteration just produced -- which is protected by
+    name rather than by trusting its mtime to sort first.
+
+    Every failure is swallowed: pruning is housekeeping, and housekeeping may not
+    cost the iteration that just ran for hours.
+    """
+    if keep is None:
+        return
+    try:
+        jobs_dir = Path(jobs_dir)
+        if not jobs_dir.is_dir():
+            return
+        newest_first = sorted((d for d in jobs_dir.iterdir() if d.is_dir()),
+                              key=lambda d: (d.stat().st_mtime, d.name), reverse=True)
+        doomed = [d for d in newest_first[max(keep, 0):] if d.name != protect]
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] could not list {jobs_dir} to prune it: "
+              f"{type(exc).__name__}: {str(exc)[:MAX_ERROR_CHARS]}",
+              file=sys.stderr, flush=True)
+        return
+    for d in doomed:
+        try:
+            shutil.rmtree(d)
+            print(f"  [prune] removed old job dir {d}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [warn] could not prune {d}: {type(exc).__name__}: "
+                  f"{str(exc)[:MAX_ERROR_CHARS]}", file=sys.stderr, flush=True)
 
 
 def judge_trajectory(trial: Path, model: str = "claude-opus-5") -> dict:
@@ -185,6 +413,11 @@ def run_iteration(i: int, base_cfg: dict, history: str, *,
     # `export_traces` key in the JSON would be silently DROPPED: the config would look
     # correct while harbor wrote no agent/trajectory.json, leaving the summariser and
     # the judge with nothing to read and every seed flagged verification_incomplete.
+    # Snapshot before launching so the finally below can remove exactly what this
+    # iteration added. Taken after validation, so a rejected config launches nothing
+    # and asks docker nothing.
+    containers_before = _docker_task_containers()
+    interrupted = False
     try:
         proc = subprocess.run(cmd, cwd=str(HARNESS_ROOT), capture_output=True,
                               text=True, timeout=timeout)
@@ -198,21 +431,39 @@ def run_iteration(i: int, base_cfg: dict, history: str, *,
         print(f"  [warn] harbor exceeded timeout={timeout}s", file=sys.stderr,
               flush=True)
         returncode = TIMEOUT_RETURNCODE
+    except KeyboardInterrupt:
+        # Ctrl-C stops the campaign, but not before the hours already spent are
+        # parsed and recorded. The interrupt is re-raised at the end of this
+        # function, wrapped around the finished row.
+        print(f"\n  [warn] interrupted during {job_name}; recording what was "
+              f"measured", file=sys.stderr, flush=True)
+        interrupted = True
+        returncode = INTERRUPT_RETURNCODE
+    finally:
+        # Harbor's containers are not children of the harbor process, so neither a
+        # timeout nor a Ctrl-C reaps them; without this they sit on the GPUs.
+        _remove_new_containers(containers_before, job_name)
 
     job_dir = Path(cfg["jobs_dir"]) / job_name
     trial = find_trial(job_dir, t0) if job_dir.is_dir() else None
     if trial is None:
         # Absence is data. A launch that produced nothing is still an iteration and
         # still belongs in the ledger, or the next attempt sees a gap it cannot explain.
-        return {"iteration": i, "reward": 0.0, "reason": "no_trial_produced",
-                "outcome": "harness_incomplete", "n_seeds": 0, "findings": "",
-                "timestamp_utc": utc(), "job_name": job_name,
-                "harbor_returncode": returncode}
+        sparse = {"iteration": i, "reward": 0.0, "reason": "no_trial_produced",
+                  "outcome": "harness_incomplete", "n_seeds": 0, "findings": "",
+                  "timestamp_utc": utc(), "job_name": job_name,
+                  "harbor_returncode": returncode}
+        if interrupted:
+            sparse["interrupted"] = True
+            raise IterationInterrupted(sparse)
+        return sparse
 
     row = read_trial(trial)
     row.update({"iteration": i, "timestamp_utc": utc(), "job_name": job_name,
                 "findings": agent_findings(trial), "harbor_returncode": returncode,
                 "history_injected": bool(history)})
+    if interrupted:
+        row["interrupted"] = True
 
     # DURABILITY CHECKPOINT. Everything above is measured fact; everything below is
     # advisory LLM enrichment that reaches over the network. The facts are put on
@@ -220,6 +471,11 @@ def run_iteration(i: int, base_cfg: dict, history: str, *,
     # catch) but a SIGKILL, an OOM or a pulled plug, which no handler can catch.
     (history_dir / f"iter{i:02d}_facts.json").write_text(
         json.dumps(row, indent=2, default=str))
+
+    if interrupted:
+        # Enrichment is advisory and reaches over the network; an operator who
+        # pressed Ctrl-C is not waiting for it. The facts are complete and durable.
+        raise IterationInterrupted(row)
 
     if judge_enabled:
         row["rubric_verdicts"] = judge_trajectory(trial)
@@ -244,7 +500,9 @@ def refine(task, iterations: int = 3, *, start_at: int | None = None,
            summarise: bool = False, judge_enabled: bool = False,
            harbor_bin: str | None = None,
            agent_name: str = "claude-code",
-           base_cfg_overrides: dict | None = None) -> list[dict]:
+           base_cfg_overrides: dict | None = None,
+           timeout: float | None = None,
+           keep_jobs: int | None = None) -> list[dict]:
     """Drive `iterations` refinement rounds over `task`, appending each to the ledger.
 
     Returns every row the ledger holds afterwards, prior rows included, because the
@@ -256,37 +514,52 @@ def refine(task, iterations: int = 3, *, start_at: int | None = None,
     ledger = run_root / "ledger.jsonl"
     harbor_bin = harbor_bin or resolve_harbor_bin()
 
-    base_cfg = build_base_cfg(task_dir, run_root, agent_name=agent_name)
-    if base_cfg_overrides:
-        base_cfg.update(base_cfg_overrides)
+    # Everything that reads or writes the run root happens under this lock, including
+    # the `start` derivation: taking it any later would leave the read of the ledger
+    # racing the other run's append.
+    with run_root_lock(run_root, task_desc=str(task_dir)):
+        base_cfg = build_base_cfg(task_dir, run_root, agent_name=agent_name)
+        if base_cfg_overrides:
+            base_cfg.update(base_cfg_overrides)
 
-    rows = load_ledger(ledger)
-    # The ledger IS the loop state. Deriving `start` from it -- rather than from a
-    # counter held in memory or a separate state file -- is what makes an interrupted
-    # campaign resumable by simply running the same command again.
-    start = start_at if start_at is not None else len(rows) + 1
-    budget = task_budget_hours(task_dir)
+        rows = load_ledger(ledger)
+        # The ledger IS the loop state. Deriving `start` from it -- rather than from a
+        # counter held in memory or a separate state file -- is what makes an
+        # interrupted campaign resumable by simply running the same command again.
+        start = start_at if start_at is not None else len(rows) + 1
+        budget = task_budget_hours(task_dir)
 
-    for n in range(iterations):
-        i = start + n
-        history = render_history(rows, total_iterations=start + iterations - 1,
-                                 budget_hours=budget)
-        row = run_iteration(i, base_cfg, history, run_root=run_root,
-                            task_dir=task_dir, harbor_bin=harbor_bin,
-                            summarise=summarise, judge_enabled=judge_enabled)
-        # Appended IMMEDIATELY, before any further work: an iteration that is not on
-        # disk did not happen as far as a resumed campaign is concerned.
-        with ledger.open("a") as f:
-            f.write(json.dumps(row, sort_keys=True, default=str) + "\n")
-        rows.append(row)
-        print(f"[{utc()}] iteration {i}: reward={row.get('reward', 0.0):.4f} "
-              f"outcome={row.get('outcome')} seeds={row.get('n_seeds')} "
-              f"tokens_in={row.get('n_input_tokens')}", flush=True)
+        for n in range(iterations):
+            i = start + n
+            history = render_history(rows, total_iterations=start + iterations - 1,
+                                     budget_hours=budget)
+            try:
+                row = run_iteration(i, base_cfg, history, run_root=run_root,
+                                    task_dir=task_dir, harbor_bin=harbor_bin,
+                                    summarise=summarise, judge_enabled=judge_enabled,
+                                    timeout=timeout)
+            except IterationInterrupted as exc:
+                # An iteration that consumed GPU time must leave a trace. The append
+                # used to sit only on the success path, so Ctrl-C during a multi-hour
+                # job discarded everything it had already measured.
+                _append_row(ledger, exc.row)
+                raise
+            # Appended IMMEDIATELY, before any further work: an iteration that is not
+            # on disk did not happen as far as a resumed campaign is concerned.
+            _append_row(ledger, row)
+            rows.append(row)
+            print(f"[{utc()}] iteration {i}: reward={row.get('reward', 0.0):.4f} "
+                  f"outcome={row.get('outcome')} seeds={row.get('n_seeds')} "
+                  f"tokens_in={row.get('n_input_tokens')}", flush=True)
+            # After the append, never before: pruning must not be able to cost the
+            # row that pays for it.
+            _prune_jobs(base_cfg.get("jobs_dir"), keep_jobs,
+                        protect=str(row.get("job_name") or ""))
 
     return rows
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description="Code-driven refinement loop: run a task N times, feeding each "
                     "iteration's summarised history into the next.")
@@ -311,13 +584,29 @@ def main(argv=None) -> int:
     ap.add_argument("--harbor-bin", default=None,
                     help="harbor executable (default: resolved from $HARBOR_BIN, "
                          "the sibling .venv-harbor, then PATH)")
-    args = ap.parse_args(argv)
+    ap.add_argument("--timeout", type=float, default=None,
+                    help="seconds to let one harbor job run before killing it and "
+                         "recording harbor_returncode=124 (default: None, i.e. NO "
+                         "limit -- a wedged container would otherwise hang the "
+                         "campaign forever)")
+    ap.add_argument("--keep-jobs", type=int, default=None, metavar="N",
+                    help="after each successful iteration, DELETE all but the newest "
+                         "N job dirs under run_root/jobs (default: unset, i.e. keep "
+                         "ALL of them and delete nothing). The dir just produced is "
+                         "never deleted.")
+    return ap
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
 
     rows = refine(args.task, iterations=args.iterations, start_at=args.start_at,
                   summarise=args.summarise,
                   judge_enabled=args.judge,
                   harbor_bin=args.harbor_bin,
-                  agent_name=args.agent)
+                  agent_name=args.agent,
+                  timeout=args.timeout,
+                  keep_jobs=args.keep_jobs)
 
     print("\n=== summary ===")
     print(f"  iterations in ledger : {len(rows)}")

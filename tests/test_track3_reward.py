@@ -14,13 +14,17 @@ properties load-bearing and worth asserting directly:
   mean, and one seed that never crosses makes the whole run ungraded (None).
 """
 
+from pathlib import Path
+
 import pytest
 
 from track3.reward import (
     BASELINE_STEPS,
+    MIRRORED_FROM_GRADE_PY,
     TARGET_LOSS,
     TARGET_STEPS,
     compute_reward,
+    constants_from_grade_py,
     reward_from_curve,
     step_to_target,
 )
@@ -37,6 +41,156 @@ def test_constants_match_the_task_grader():
     assert TARGET_STEPS == 2900
     assert TARGET_LOSS == 3.28
     assert BASELINE_STEPS - TARGET_STEPS == 600
+
+
+# --------------------------------------------------------------------------- #
+# DRIFT DETECTION -- reward.py mirrors the task grader; nothing enforced that
+# --------------------------------------------------------------------------- #
+#
+# `reward.py` copies BASELINE_STEPS/TARGET_STEPS/TARGET_LOSS out of
+# `tasks/<uuid>/tests/grade.py` by hand. If the task bundle's numbers are ever
+# edited, the mirror keeps scoring on the OLD ones: every reward in the campaign
+# is wrong and NOTHING raises. The tests below are the only error surface that
+# defect has, so they must fail loudly and name both values.
+#
+# grade.py is PARSED, never imported: it is stdlib-only in-container code that
+# reads env vars and writes reward.json at import-adjacent scope, and the outer
+# loop must not execute the task's test tree to score a run.
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _grade_py_task_dirs():
+    """Task bundles on disk that carry the grader these constants come from."""
+    return sorted(
+        p.parent.parent for p in REPO_ROOT.glob("tasks/*/tests/grade.py")
+        if "BASELINE_STEPS" in p.read_text(encoding="utf-8", errors="replace")
+    )
+
+
+def _assert_no_drift(parsed: dict, source: str) -> None:
+    """The comparison itself, factored out so the detector can be tested too."""
+    mirrored = {"BASELINE_STEPS": BASELINE_STEPS,
+                "TARGET_STEPS": TARGET_STEPS,
+                "TARGET_LOSS": TARGET_LOSS}
+    drifted = [
+        f"  {name}: runner/track3/reward.py has {mirrored[name]!r}, "
+        f"{source} has {parsed[name]!r}"
+        for name in MIRRORED_FROM_GRADE_PY if mirrored[name] != parsed[name]
+    ]
+    assert not drifted, (
+        "track3.reward constants have DRIFTED from the task grader that owns them:\n"
+        + "\n".join(drifted)
+        + "\nEvery reward in the campaign is being scored on stale numbers, with no "
+          "error surface. Update runner/track3/reward.py to match the task bundle "
+          "(or fix the bundle), then re-run."
+    )
+
+
+def test_reward_constants_do_not_drift_from_the_task_grader():
+    """The mirror agrees with the source of truth TODAY. Fails the day it stops."""
+    task_dirs = _grade_py_task_dirs()
+    if not task_dirs:
+        pytest.skip(
+            "no task bundle with tests/grade.py defining BASELINE_STEPS is present "
+            "under tasks/; the mirror cannot be checked without it, and the repo is "
+            "meant to stay testable with the bundle absent"
+        )
+    for task_dir in task_dirs:
+        _assert_no_drift(
+            constants_from_grade_py(task_dir),
+            f"{task_dir.relative_to(REPO_ROOT)}/tests/grade.py",
+        )
+
+
+def test_drift_check_fails_loudly_when_the_grader_moves(tmp_path):
+    """Prove the detector detects.
+
+    The real bundle is read-only, so the divergence is staged in a temp copy of
+    grade.py rather than by editing tasks/. Asserts on the FAILURE MESSAGE: a
+    drift test that fails without naming both numbers sends whoever hits it back
+    to the source anyway.
+    """
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "grade.py").write_text(
+        "import os\n"
+        "BASELINE_STEPS = 3400\n"
+        "TARGET_STEPS = 2900\n"
+        "TARGET_LOSS = 3.20\n"
+        "SIG_MARGIN = 0.004\n"
+    )
+    parsed = constants_from_grade_py(tmp_path)
+    with pytest.raises(AssertionError) as exc:
+        _assert_no_drift(parsed, "tampered/grade.py")
+    msg = str(exc.value)
+    assert "DRIFTED" in msg
+    # both sides of every divergence are named, and the agreeing one is not noise
+    assert "3400" in msg and str(BASELINE_STEPS) in msg
+    assert "3.2" in msg and str(TARGET_LOSS) in msg
+    assert "TARGET_STEPS" not in msg
+
+
+# --------------------------------------------------------------------------- #
+# constants_from_grade_py -- the parser behind the drift check
+# --------------------------------------------------------------------------- #
+
+
+def test_constants_from_grade_py_reads_the_real_bundle():
+    task_dirs = _grade_py_task_dirs()
+    if not task_dirs:
+        pytest.skip("no task bundle with tests/grade.py on disk")
+    parsed = constants_from_grade_py(task_dirs[0])
+    assert set(parsed) == set(MIRRORED_FROM_GRADE_PY)
+    assert isinstance(parsed["BASELINE_STEPS"], int)
+    assert isinstance(parsed["TARGET_LOSS"], float)
+
+
+def test_constants_from_grade_py_accepts_the_tests_dir_or_the_file(tmp_path):
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    grade = tests_dir / "grade.py"
+    grade.write_text("BASELINE_STEPS = 10\nTARGET_STEPS = 5\nTARGET_LOSS = 1.5\n")
+    expected = {"BASELINE_STEPS": 10, "TARGET_STEPS": 5, "TARGET_LOSS": 1.5}
+    assert constants_from_grade_py(tmp_path) == expected
+    assert constants_from_grade_py(tests_dir) == expected
+    assert constants_from_grade_py(grade) == expected
+
+
+def test_constants_from_grade_py_does_not_execute_the_grader(tmp_path):
+    """Parsing, not importing: in-container grader code must never run out here."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "grade.py").write_text(
+        "raise SystemExit('grade.py must never be executed by the outer loop')\n"
+        "BASELINE_STEPS = 3500\nTARGET_STEPS = 2900\nTARGET_LOSS = 3.28\n"
+    )
+    assert constants_from_grade_py(tmp_path)["BASELINE_STEPS"] == 3500
+
+
+def test_constants_from_grade_py_ignores_nested_rebindings(tmp_path):
+    """Only module-level assignments are the contract; a local shadow is not."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "grade.py").write_text(
+        "BASELINE_STEPS = 3500\nTARGET_STEPS = 2900\nTARGET_LOSS = 3.28\n"
+        "def f():\n    BASELINE_STEPS = 1\n    return BASELINE_STEPS\n"
+    )
+    assert constants_from_grade_py(tmp_path)["BASELINE_STEPS"] == 3500
+
+
+def test_constants_from_grade_py_raises_when_absent(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        constants_from_grade_py(tmp_path)
+
+
+def test_constants_from_grade_py_raises_when_a_constant_is_missing(tmp_path):
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "grade.py").write_text("BASELINE_STEPS = 3500\n")
+    with pytest.raises(ValueError) as exc:
+        constants_from_grade_py(tmp_path)
+    assert "TARGET_STEPS" in str(exc.value)
 
 
 # --------------------------------------------------------------------------- #

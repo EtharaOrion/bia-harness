@@ -48,6 +48,7 @@ from track3.trial_io import (
     _budget_used,
     agent_findings,
     find_trial,
+    find_trial_with_staleness,
     parent_artifacts,
     read_trial,
     task_budget_hours,
@@ -692,19 +693,186 @@ def test_find_trial_ignores_children_without_result_json(tmp_path):
     assert find_trial(job, 0.0) is None
 
 
-def test_find_trial_refalls_back_when_all_candidates_predate_since(tmp_path):
-    """The re-glob fallback: a stale-but-real trial beats returning nothing."""
-    now = time.time()
-    job = _job_with_trials(
-        tmp_path / "job", [("older", now - 9000), ("newer", now - 6000)]
-    )
-    assert find_trial(job, now) == job / "newer"
-
-
 def test_find_trial_honours_the_five_second_grace(tmp_path):
     now = time.time()
     job = _job_with_trials(tmp_path / "job", [("a", now - 3)])
     assert find_trial(job, now) == job / "a"
+
+
+# --------------------------------------------------------------------------
+# DEFECT 1: a stale trial must never be scored as this iteration's result
+# --------------------------------------------------------------------------
+
+
+def _stale_job(tmp_path):
+    """A job dir whose every trial predates the launch, and that launch time.
+
+    Staleness is expressed by launching AFTER everything on disk rather than by
+    backdating the trials, because `os.utime` cannot backdate ctime -- the kernel
+    bumps it on any metadata write -- and `find_trial` deliberately treats a fresh
+    ctime as proof of arrival. A launch time later than every candidate is the same
+    situation the defect describes (relaunch of an `agentic_iterNN` dir that already
+    holds an earlier run's trial) and is expressible with stdlib alone.
+    """
+    now = time.time()
+    job = _job_with_trials(
+        tmp_path / "job", [("older", now - 9000), ("newer", now - 6000)]
+    )
+    return job, now + 3600
+
+
+def test_find_trial_does_not_return_a_stale_trial_by_default(tmp_path):
+    """The whole defect. A failed relaunch produced NO trial this iteration.
+
+    Returning an earlier run's trial from the same agentic_iterNN job dir makes the
+    loop score a plausible success where there was a launch failure -- reward, curve
+    and carried parent source all belong to a different iteration.
+    """
+    job, since = _stale_job(tmp_path)
+    assert find_trial(job, since) is None
+
+
+def test_find_trial_warns_loudly_on_stderr_when_the_stale_path_is_taken(tmp_path,
+                                                                        capsys):
+    job, since = _stale_job(tmp_path)
+    find_trial(job, since)
+    err = capsys.readouterr().err
+    assert "stale" in err.lower()
+    assert "newer" in err
+
+
+def test_find_trial_does_not_warn_when_a_fresh_trial_exists(tmp_path, capsys):
+    now = time.time()
+    job = _job_with_trials(tmp_path / "job", [("old", now - 9000), ("new", now)])
+    assert find_trial(job, now) == job / "new"
+    assert capsys.readouterr().err == ""
+
+
+def test_find_trial_does_not_warn_for_an_empty_job_dir(tmp_path, capsys):
+    """Nothing at all is honestly None already -- no stale path was taken."""
+    job = tmp_path / "job"
+    job.mkdir()
+    assert find_trial(job, time.time()) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_find_trial_returns_the_stale_trial_only_on_explicit_opt_in(tmp_path):
+    """The fallback is kept -- a stale trial is still diagnostically useful."""
+    job, since = _stale_job(tmp_path)
+    assert find_trial(job, since, allow_stale=True) == job / "newer"
+
+
+def test_find_trial_with_staleness_flags_the_stale_case(tmp_path):
+    job, since = _stale_job(tmp_path)
+    assert find_trial_with_staleness(job, since) == (job / "newer", True)
+
+
+def test_find_trial_with_staleness_flags_the_fresh_case(tmp_path):
+    now = time.time()
+    job = _job_with_trials(tmp_path / "job", [("old", now - 9000), ("new", now)])
+    assert find_trial_with_staleness(job, now) == (job / "new", False)
+
+
+def test_a_copied_in_trial_is_fresh_despite_a_backdated_mtime(tmp_path):
+    """`shutil.copytree` preserves the SOURCE mtime; ctime tells the truth.
+
+    This is how harbor trials arrive in the loop's own test doubles, and it is how
+    any archive/rsync-delivered trial arrives in production. Judging arrival on mtime
+    alone would report a directory created milliseconds ago as an earlier run's.
+    """
+    import shutil
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "result.json").write_text("{}")
+    os.utime(src, (time.time() - 90000, time.time() - 90000))
+
+    job = tmp_path / "job"
+    job.mkdir()
+    launched_at = time.time()
+    shutil.copytree(src, job / "trial-1")
+
+    assert (job / "trial-1").stat().st_mtime < launched_at - 80000
+    assert find_trial_with_staleness(job, launched_at) == (job / "trial-1", False)
+
+
+def test_ordering_still_uses_mtime_not_arrival(tmp_path):
+    """Arrival decides fresh-vs-stale; mtime alone ranks trials against each other."""
+    now = time.time()
+    job = _job_with_trials(tmp_path / "job", [("first", now - 100), ("second", now)])
+    assert find_trial(job, now - 500) == job / "second"
+
+
+def test_find_trial_with_staleness_on_empty_dir_is_not_stale(tmp_path):
+    job = tmp_path / "job"
+    job.mkdir()
+    assert find_trial_with_staleness(job, time.time()) == (None, False)
+
+
+def test_find_trial_default_call_signature_still_takes_two_positionals(tmp_path):
+    """loop.py calls find_trial(job_dir, t0) and is owned by another agent."""
+    import inspect
+    params = list(inspect.signature(find_trial).parameters.values())
+    positional = [p for p in params
+                  if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD]
+    assert [p.name for p in positional[:2]] == ["job_dir", "since"]
+    assert all(p.default is inspect.Parameter.empty for p in positional[:2])
+    now = time.time()
+    job = _job_with_trials(tmp_path / "job", [("new", now)])
+    assert find_trial(job, now - 200) == job / "new"
+
+
+# --------------------------------------------------------------------------
+# DEFECT 1: a directory vanishing between the glob and the stat
+# --------------------------------------------------------------------------
+
+
+def test_find_trial_survives_a_directory_vanishing_between_glob_and_stat(tmp_path):
+    """A concurrent reaper can unlink a trial after glob() yielded it."""
+    now = time.time()
+    job = _job_with_trials(tmp_path / "job", [("doomed", now), ("survivor", now)])
+    doomed = job / "doomed"
+    real_stat = Path.stat
+
+    def flaky_stat(self, *a, **kw):
+        if self == doomed:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_stat(self, *a, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "stat", flaky_stat)
+        assert find_trial(job, now - 200) == job / "survivor"
+
+
+def test_find_trial_returns_none_when_every_directory_vanishes(tmp_path):
+    now = time.time()
+    job = _job_with_trials(tmp_path / "job", [("a", now), ("b", now)])
+
+    doomed = {job / "a", job / "b"}
+    real_stat = Path.stat
+
+    def gone_stat(self, *a, **kw):
+        if self in doomed:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_stat(self, *a, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "stat", gone_stat)
+        assert find_trial(job, now - 200) is None
+
+
+def test_find_trial_survives_a_vanish_on_the_stale_path_too(tmp_path):
+    job, since = _stale_job(tmp_path)
+    doomed = job / "older"
+    real_stat = Path.stat
+
+    def flaky_stat(self, *a, **kw):
+        if self == doomed:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_stat(self, *a, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "stat", flaky_stat)
+        assert find_trial(job, since, allow_stale=True) == job / "newer"
 
 
 # --------------------------------------------------------------------------

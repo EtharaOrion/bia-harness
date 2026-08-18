@@ -209,6 +209,88 @@ def test_no_telemetry_block_for_a_clean_graded_history():
 
 
 # --------------------------------------------------------------------------
+# `unknown` -- the outcome that used to get NO guidance at all
+# --------------------------------------------------------------------------
+#
+# `classify` returns "unknown" whenever the verifier emits a reason string it
+# does not recognise. Before this block existed the agent saw outcome `unknown`,
+# reward cell `not graded`, and nothing else: no account of why it scored 0.0
+# and no instruction on what to do differently. That is the live pipeline's
+# actual failure mode -- three consecutive unscored iterations -- so `unknown`
+# must steer at least as hard as `agent_abandoned_run` does.
+
+UNKNOWN_MARKER = "no recognisable verdict"
+
+
+def test_unknown_last_run_gets_guidance():
+    out = render_history([row(iteration=0, reward=0.0, outcome="unknown")])
+    assert UNKNOWN_MARKER in out
+
+
+def test_unknown_guidance_says_the_zero_is_not_a_refutation():
+    """The whole point: a 0.0 from an unread verdict is not evidence against the rule."""
+    out = render_history([row(iteration=0, reward=0.0, outcome="unknown")])
+    assert "NOT evidence" in out
+    assert "number on the board" in out
+
+
+def test_unknown_row_gets_the_telemetry_block():
+    """An unrecognised verdict most often means the telemetry never bound."""
+    out = render_history([row(iteration=0, reward=0.0, outcome="unknown")])
+    assert "## Telemetry binding" in out
+
+
+def test_graded_pass_does_not_get_the_unknown_guidance():
+    out = render_history([row(iteration=0, reward=0.4, outcome="graded_pass")])
+    assert UNKNOWN_MARKER not in out
+
+
+@pytest.mark.parametrize("outcome", ["graded_pass", "graded_miss",
+                                     "harness_incomplete", "agent_abandoned_run"])
+def test_unknown_guidance_fires_for_no_other_outcome(outcome):
+    out = render_history([row(iteration=0, reward=0.0, outcome=outcome)])
+    assert UNKNOWN_MARKER not in out
+
+
+def test_unknown_guidance_follows_the_last_row_not_an_older_one():
+    """Same gating as the abandoned-run block: the last attempt is the actionable one."""
+    rows = [row(iteration=0, reward=0.0, outcome="unknown"),
+            row(iteration=1, reward=0.4, outcome="graded_pass")]
+    assert UNKNOWN_MARKER not in render_history(rows)
+    rows = [row(iteration=0, reward=0.4, outcome="graded_pass"),
+            row(iteration=1, reward=0.0, outcome="unknown")]
+    assert UNKNOWN_MARKER in render_history(rows)
+
+
+def test_unknown_guidance_leaks_no_grader_vocabulary():
+    out = render_history([row(iteration=0, reward=0.0, outcome="unknown")])
+    assert_no_forbidden(out)
+
+
+def test_unknown_guidance_does_not_break_the_length_trim():
+    """The new block is prose the trim cannot drop, so it must not push past the cap."""
+    rows = [row(iteration=i, reward=0.0, outcome="graded_miss",
+                findings=f"iteration {i} account. " + ("blah " * 1200))
+            for i in range(30)]
+    rows[-1] = row(iteration=29, reward=0.0, outcome="unknown",
+                   findings="last account. " + ("blah " * 1200))
+    out = render_history(rows)
+    assert len(out) <= MAX_HISTORY_CHARS, f"{len(out)} > {MAX_HISTORY_CHARS}"
+    assert FACTS_HEADER in out
+    assert UNKNOWN_MARKER in out
+    assert "## Telemetry binding" in out
+    for i in range(22, 30):
+        assert f"| {i} | " in out
+
+
+def test_unknown_guidance_is_short_enough_to_leave_room_for_the_facts():
+    """A guidance block the trim cannot sacrifice must stay a small slice of budget."""
+    base = len(render_history([row(iteration=0, reward=0.0, outcome="harness_incomplete")]))
+    grown = len(render_history([row(iteration=0, reward=0.0, outcome="unknown")]))
+    assert grown - base < MAX_HISTORY_CHARS // 20
+
+
+# --------------------------------------------------------------------------
 # header prose
 # --------------------------------------------------------------------------
 
