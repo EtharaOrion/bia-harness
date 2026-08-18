@@ -15,7 +15,8 @@ from orchestrator import (
 )
 
 
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
+# legacy/harness2/tests/<file> -> tests -> harness2 -> legacy -> harness root
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _make_task(tmp_path, *, name="my-task", description="Do the thing.", instruction="Follow the plan."):

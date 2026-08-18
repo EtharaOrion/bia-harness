@@ -1,7 +1,7 @@
 """Reward from the measured loss curve, independent of the task verifier.
 
 The verifier (`verifier/reward_full.json`) and the LLM judge are currently UNWIRED
-from the loop -- see the module note in `track3/loop.py`. This module is what takes
+from the loop -- see the module note in `agentloop/loop.py`. This module is what takes
 their place: it turns the val_loss curve the trial actually wrote into the single
 number the ledger ranks iterations by.
 
@@ -19,7 +19,7 @@ The cost of that mirror is DRIFT: edit the numbers in the bundle and this module
 on scoring the whole campaign against the old ones, with no exception and no log line.
 `constants_from_grade_py` reads them back out of the bundle by PARSING it -- the file
 is in-container code that reads env vars and writes `reward.json`, so it must never be
-imported out here -- and `tests/test_track3_reward.py` asserts the two agree, naming
+imported out here -- and `tests/test_agentloop_reward.py` asserts the two agree, naming
 both values when they do not. Detection, not rebinding: the module-level constants stay
 the default scoring path, because a score that silently changes when a task directory
 happens to be resolvable is a worse failure than one that is merely stale, and the
@@ -59,7 +59,7 @@ import ast
 from pathlib import Path
 
 # Mirrored from tasks/2739a678-1759-516d-8ba7-1cd023267ea8/tests/grade.py:34-36.
-# Kept honest by tests/test_track3_reward.py, which parses that file and compares.
+# Kept honest by tests/test_agentloop_reward.py, which parses that file and compares.
 BASELINE_STEPS = 3500
 TARGET_STEPS = 2900
 TARGET_LOSS = 3.28

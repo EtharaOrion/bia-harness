@@ -7,13 +7,13 @@ is imported, not duplicated.
 
 Three things here are load-bearing and deliberate:
 
-* The reward is COMPUTED by `track3.reward` from the FULL-DENSITY parsed loss curve
+* The reward is COMPUTED by `agentloop.reward` from the FULL-DENSITY parsed loss curve
   (`parent_artifacts` returns it as `full_curve`), not from the thinned `parent_curve`
   that gets rendered into the agent's prompt. `MAX_CURVE_POINTS` is a display budget
   and must never move a score. `read_trial` pops `full_curve` once it has scored, so
   it never reaches the ledger row.
 * The task verifier and the LLM judge are currently UNWIRED (see the note in
-  `track3/loop.py`), so ``verifier/reward_full.json`` no longer supplies the score,
+  `agentloop/loop.py`), so ``verifier/reward_full.json`` no longer supplies the score,
   but it is still
   read, because it is the only file carrying ``reason`` and ``metrics``. It is also
   still the FULL record and not ``verifier/reward.json``: harbor writes the short
@@ -39,8 +39,8 @@ import re
 import sys
 from datetime import datetime
 
-from track3.classify import _graded_step, classify
-from track3.reward import reward_from_curve
+from agentloop.classify import _graded_step, classify
+from agentloop.reward import reward_from_curve
 
 MAX_FINDINGS_CHARS = 1200
 MAX_PARENT_SOURCE_CHARS = 18000
@@ -72,8 +72,8 @@ def read_trial(trial: pathlib.Path) -> dict:
     budget_frac = _budget_used(res, trial)
 
     # The reward is COMPUTED from the measured curve, not read from `rf["reward"]`.
-    # The verifier and the LLM judge are currently unwired (see track3/loop.py), so
-    # `track3.reward` is the only thing that scores an iteration. reward_full is
+    # The verifier and the LLM judge are currently unwired (see agentloop/loop.py), so
+    # `agentloop.reward` is the only thing that scores an iteration. reward_full is
     # still read above and below for `reason` and `metrics`, which nothing else
     # carries, and which stay useful whenever the verifier is re-enabled.
     artifacts = parent_artifacts(trial)
@@ -123,7 +123,7 @@ def parent_artifacts(trial: pathlib.Path) -> dict:
     The curve is returned at BOTH densities from a single parse of each log, because
     the two have different consumers and must not be conflated: `parent_curve` is
     thinned to ~MAX_CURVE_POINTS for the agent-facing history markdown, while
-    `full_curve` is every parsed point and is what `track3.reward` scores. A caller
+    `full_curve` is every parsed point and is what `agentloop.reward` scores. A caller
     that scores the thinned curve makes the display budget load-bearing on the reward.
 
     Keys are ABSENT rather than None when nothing is found, so a caller can splat the
@@ -272,7 +272,7 @@ def find_trial(job_dir: pathlib.Path, since: float, *,
     trial, is_stale = find_trial_with_staleness(job_dir, since)
     if not is_stale:
         return trial
-    print(f"WARNING: track3.trial_io.find_trial: no trial in {job_dir} is newer than "
+    print(f"WARNING: agentloop.trial_io.find_trial: no trial in {job_dir} is newer than "
           f"since={since:.0f}; the newest one ({trial}) is STALE and belongs to an "
           f"earlier run of this job dir. "
           + (f"Returning it anyway because allow_stale=True -- it must NOT be scored "

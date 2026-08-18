@@ -46,7 +46,7 @@ End-to-end lifecycle of one candidate variant across any registered task.
 │                       iff both present                                  │
 │     Runner shells: `python <mounted>/tests/grader.py <log>` -> JSON     │
 │                                                                         │
-│  7. Ingest (runner/legacy_planner/ingest_result.py)                                    │
+│  7. Ingest (legacy/harness2/ingest_result.py)                                    │
 │     Normalize reward.json + metadata into 20-field canonical row.       │
 │     task_id populated from task.toml (not hardcoded).                   │
 │     Append one JSON line to runs.jsonl.                                 │
@@ -65,27 +65,27 @@ failures. It never retries training, changes the seed count, or creates an
 additional attempt. The former `--retries` flag has been removed because it
 mixed unrelated retry domains.
 
-## Code-driven refinement flow (`runner/track3`)
+## Code-driven refinement flow (`runner/agentloop`)
 
 The flow above injects an LLM-authored variant from *outside* the container. That
 depends on a `[variant]` block in `mount.toml`, so it cannot be used for a task whose
-`/workspace` ships inside the docker image. `runner/track3` is the other direction:
+`/workspace` ships inside the docker image. `runner/agentloop` is the other direction:
 the agent authors `/workspace/submission/optimizer.py` and runs training *inside* the
 container, and our code drives everything around it.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  1. Resolve task + run root                                             │
-│     resolve_task(name|uuid|path); run root = runs/track3/<slug>/        │
+│     resolve_task(name|uuid|path); run root = runs/agentloop/<slug>/        │
 │     start = len(ledger rows) + 1   (or --start-at)                      │
 │                                                                         │
-│  2. Render history (track3/history.py)                                  │
+│  2. Render history (agentloop/history.py)                                  │
 │     prior ledger rows -> agent-facing markdown (facts table, per-       │
 │     iteration prose, best-so-far source, synthetic banner if any).      │
 │     Empty on iteration 1: nothing to inject, no file written.           │
 │     -> history/iterNN_history.md                                        │
 │                                                                         │
-│  3. Build + validate config (track3/harbor_config.py)                   │
+│  3. Build + validate config (agentloop/harbor_config.py)                   │
 │     build_base_cfg -> job_name, jobs_dir (under the run root), agents[] │
 │     with model_name/env, tasks[].path, retry policy.                    │
 │     --agent picks who authors in-container. Both hit the SAME bridge;   │
@@ -101,19 +101,19 @@ container, and our code drives everything around it.
 │     harbor run --config .cfg_iterNN.json --export-traces                │
 │     --export-traces is a CLI FLAG, not a config key (see below).        │
 │                                                                         │
-│  5. Locate + parse the trial (track3/trial_io.py)                       │
+│  5. Locate + parse the trial (agentloop/trial_io.py)                       │
 │     find_trial(jobs_dir/job_name, since=launch time), then read_trial:  │
 │     tokens + cost from result.json, submitted optimizer.py and val_loss │
 │     curve from artifacts/, reason/metrics from verifier/reward_full.json│
 │     (NOT reward.json). Every reader falls back on error: a partial      │
 │     trial must yield a reward-0 row, not a traceback.                   │
 │                                                                         │
-│  5b. Score from the curve (track3/reward.py) — VERIFIER UNWIRED         │
+│  5b. Score from the curve (agentloop/reward.py) — VERIFIER UNWIRED         │
 │     reward = clamp01((3500 - step) / 600) where `step` is the first at  │
 │     which EVERY seed reaches val_loss <= 3.28 (max across seeds; None   │
 │     if any seed never does). The verifier's own reward is ignored.      │
 │                                                                         │
-│  6. Classify (track3/classify.py)                                       │
+│  6. Classify (agentloop/classify.py)                                       │
 │     graded_pass | graded_miss | gate_fail | agent_abandoned_run |       │
 │     harness_incomplete | unknown                                        │
 │                                                                         │
@@ -132,11 +132,11 @@ container, and our code drives everything around it.
 ```
 
 ```bash
-python runner/track3/loop.py --task <name|uuid|path> --iterations N \
+python runner/agentloop/loop.py --task <name|uuid|path> --iterations N \
   [--start-at N] [--summarise] [--judge] [--harbor-bin PATH]
 ```
 
-Per-task layout under `runs/track3/<slug>/`:
+Per-task layout under `runs/agentloop/<slug>/`:
 
 | Path | Contents |
 |---|---|
@@ -164,7 +164,7 @@ hash; those rows carry `is_synthetic`, and `history.render_history` prints
 `marking.SYNTHETIC_BANNER` above the facts table when any shown row is synthetic. They
 are not validated results and must not be reported as such.
 
-`tests/test_track3_integration.py` exercises this against real harbor and real docker,
+`tests/test_agentloop_integration.py` exercises this against real harbor and real docker,
 but only under `TRACK3_INTEGRATION=1` (plus a harbor binary, a live docker daemon and
 the task image); otherwise it skips, because one iteration starts a GPU container.
 

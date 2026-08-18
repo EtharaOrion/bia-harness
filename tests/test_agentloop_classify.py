@@ -1,4 +1,4 @@
-"""Tests for track3.classify, ported from track3-pipeline/tools/refine.py.
+"""Tests for agentloop.classify, ported from track3-pipeline/tools/refine.py.
 
 Branch ORDER is load-bearing: the classification decides what the next
 iteration is told about the previous one, so each branch is pinned
@@ -10,8 +10,8 @@ import re
 
 import pytest
 
-from track3 import classify as classify_mod
-from track3.classify import RECOGNISED_REASON_TOKENS, classify, _graded_step
+from agentloop import classify as classify_mod
+from agentloop.classify import RECOGNISED_REASON_TOKENS, classify, _graded_step
 
 
 # --- the six outcomes ---------------------------------------------------

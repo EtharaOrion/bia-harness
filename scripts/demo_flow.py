@@ -35,12 +35,12 @@ from typing import Any
 HARNESS_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HARNESS_ROOT))
 sys.path.insert(0, str(HARNESS_ROOT / "runner"))
-# legacy_planner modules are still imported flat, not as legacy_planner.*
-sys.path.insert(0, str(HARNESS_ROOT / "runner" / "legacy_planner"))
+# legacy/harness2 modules are imported flat (`import orchestrator`), not as a package.
+sys.path.insert(0, str(HARNESS_ROOT / "legacy" / "harness2"))
 
-from runner.legacy_planner import orchestrator  # noqa: E402
+import orchestrator  # noqa: E402  (flat, from legacy/harness2 on sys.path)
 from runner.harness import resolve_task, resolve_work_root, resolve_policy_root, resolve_ledger_path, read_task_id  # noqa: E402
-from runner.legacy_planner.llm_client import LLMResponse  # noqa: E402
+from llm_client import LLMResponse  # noqa: E402
 
 
 DEFAULT_TASK = "nanogpt-speedrun"

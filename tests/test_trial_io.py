@@ -4,13 +4,13 @@
 from the Track-3 production pipeline (two graded seeds; its own verifier recorded
 reward 0.5, reason `graded_step=3200`). Every assertion about the happy path below
 reads that fixture rather than a hand-built mock, so a parser that only satisfies
-invented shapes cannot pass. The fixture is immutable — `tests/test_track3_fixture.py`
+invented shapes cannot pass. The fixture is immutable — `tests/test_agentloop_fixture.py`
 guards it — so tests that need to write into a trial directory build one under
 `tmp_path`.
 
 THE REWARD NO LONGER COMES FROM THAT VERIFIER. The verifier and the LLM judge are
-UNWIRED (see `runner/track3/loop.py`); `read_trial` now derives the reward from the
-parsed loss curve via `track3.reward`. The fixture's verifier reason is still read —
+UNWIRED (see `runner/agentloop/loop.py`); `read_trial` now derives the reward from the
+parsed loss curve via `agentloop.reward`. The fixture's verifier reason is still read —
 it is the only carrier of `reason` — but its 0.5 is not.
 
 What the fixture's logs actually contain, measured rather than assumed:
@@ -31,7 +31,7 @@ display stride. Scoring it would have made `MAX_CURVE_POINTS` load-bearing, so t
 regression tests below pin the full-density reading directly.
 
 The residual drift from the verifier's 3200 is expected and unrelated: `grade.py`
-applies a significance margin and a persistence check that `track3.reward`
+applies a significance margin and a persistence check that `agentloop.reward`
 deliberately does not reproduce.
 """
 
@@ -43,8 +43,8 @@ from pathlib import Path
 
 import pytest
 
-from track3.reward import BASELINE_STEPS, TARGET_STEPS, compute_reward, reward_from_curve
-from track3.trial_io import (
+from agentloop.reward import BASELINE_STEPS, TARGET_STEPS, compute_reward, reward_from_curve
+from agentloop.trial_io import (
     _budget_used,
     agent_findings,
     find_trial,
@@ -287,7 +287,7 @@ def test_max_curve_points_is_not_load_bearing_on_the_reward(monkeypatch, max_poi
     agent's prompt and NOTHING else. At 1 the thinned curve collapses to two points
     and would score 0.0 if it were the input; the reward must not move.
     """
-    import track3.trial_io as trial_io
+    import agentloop.trial_io as trial_io
 
     monkeypatch.setattr(trial_io, "MAX_CURVE_POINTS", max_points)
     row = read_trial(FIXTURE)

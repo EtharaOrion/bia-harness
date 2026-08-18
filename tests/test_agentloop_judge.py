@@ -1,4 +1,4 @@
-"""Unit tests for the veto-only trajectory judge (``runner/track3/judge.py``).
+"""Unit tests for the veto-only trajectory judge (``runner/agentloop/judge.py``).
 
 The judge is a VETO: it may multiply a reward by 0 or 1 and can never raise one.
 These tests pin the properties that keep it that way, plus the two load-bearing
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from track3.judge import (
+from agentloop.judge import (
     BRIDGE,
     _agent_transcript,
     _parse_verdict,
@@ -402,9 +402,9 @@ def test_importing_the_module_does_not_require_rubrics(tmp_path):
     import importlib.util
     import shutil
 
-    import track3.judge as real
+    import agentloop.judge as real
 
-    planted = tmp_path / "isolated" / "runner" / "track3"
+    planted = tmp_path / "isolated" / "runner" / "agentloop"
     planted.mkdir(parents=True)
     shutil.copy(real.__file__, planted / "judge.py")
     assert not list(tmp_path.glob("**/rubrics.jsonl")), "sandbox must contain no rubrics"
@@ -538,7 +538,7 @@ def test_grade_attempt_on_the_real_trial_fixture(tmp_path, monkeypatch):
     """End to end against the verbatim production trial in tests/fixtures/track3_trial.
 
     Copied to tmp first: grading writes rubric_verdicts.json, and the fixture is an
-    immutable record guarded by tests/test_track3_fixture.py.
+    immutable record guarded by tests/test_agentloop_fixture.py.
     """
     import shutil
 

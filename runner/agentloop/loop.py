@@ -9,7 +9,7 @@ passes a task and CODE drives every iteration to a ledger row.
 
 CURRENTLY UNWIRED: THE VERIFIER-DERIVED REWARD, THE JUDGE AND THE SUMMARISER.
 By default an iteration reaches no LLM and does not take its score from the task
-verifier. The reward is computed by `track3.reward` from the val_loss curve the run
+verifier. The reward is computed by `agentloop.reward` from the val_loss curve the run
 actually wrote -- `(BASELINE_STEPS - step) / (BASELINE_STEPS - TARGET_STEPS)`, clamped
 to [0, 1] -- so the loop scores itself from measurement alone. `verifier/reward_full.json`
 is still parsed for `reason` and `metrics` (harmless when absent); only its reward is
@@ -40,7 +40,7 @@ RESUMABILITY. The ledger IS the loop state. `start` is derived from its length a
 each row is appended the moment it is produced, so an interrupted campaign restarts
 where it stopped with no separate bookkeeping file to fall out of sync.
 
-ISOLATION. `jobs_dir` resolves under this harness's `runs/track3/<task-uuid>/`, never
+ISOLATION. `jobs_dir` resolves under this harness's `runs/agentloop/<task-uuid>/`, never
 into the read-only 65GB track3-pipeline tree the port came from.
 
 TERMINATION. `--timeout` bounds a single harbor job and is threaded all the way to
@@ -92,19 +92,19 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-if __package__ in (None, ""):  # executed as `python runner/track3/loop.py`
+if __package__ in (None, ""):  # executed as `python runner/agentloop/loop.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from harness import HARNESS_ROOT, resolve_harbor_bin, resolve_task  # noqa: E402
-from track3 import judge, summariser  # noqa: E402
-from track3.harbor_config import (  # noqa: E402
+from agentloop import judge, summariser  # noqa: E402
+from agentloop.harbor_config import (  # noqa: E402
     HarborUnavailable,
     build_base_cfg,
     resolve_run_root,
     validate_cfg,
 )
-from track3.history import render_history  # noqa: E402
-from track3.trial_io import agent_findings, find_trial, read_trial, task_budget_hours  # noqa: E402
+from agentloop.history import render_history  # noqa: E402
+from agentloop.trial_io import agent_findings, find_trial, read_trial, task_budget_hours  # noqa: E402
 
 __all__ = ["IterationInterrupted", "RunRootBusy", "build_parser", "judge_trajectory",
            "load_ledger", "main", "refine", "run_iteration"]

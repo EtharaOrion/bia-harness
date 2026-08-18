@@ -1,4 +1,4 @@
-"""Tests for track3.history -- the feedback renderer whose output is written to a
+"""Tests for agentloop.history -- the feedback renderer whose output is written to a
 markdown file and injected verbatim into the NEXT iteration's agent prompt.
 
 This is the highest-consequence module in the refinement loop, and the failure
@@ -27,7 +27,7 @@ import re
 
 import pytest
 
-from track3.history import (
+from agentloop.history import (
     FORBIDDEN,
     MAX_HISTORY_CHARS,
     MAX_HISTORY_ITERS,
@@ -36,7 +36,7 @@ from track3.history import (
     render_parent,
     scrub,
 )
-from track3.marking import SYNTHETIC_BANNER
+from agentloop.marking import SYNTHETIC_BANNER
 
 FACTS_HEADER = "| iter | reward | graded_step | outcome (classified) | seeds |"
 
@@ -63,7 +63,7 @@ def assert_no_forbidden(text):
 # --------------------------------------------------------------------------
 
 def test_constants_preserved():
-    from track3 import history
+    from agentloop import history
     assert history.MAX_HISTORY_ITERS == 8
     assert history.MAX_FINDINGS_CHARS == 1200
     assert history.MAX_HISTORY_CHARS == 30000

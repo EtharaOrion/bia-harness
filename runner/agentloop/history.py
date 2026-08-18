@@ -47,8 +47,8 @@ from __future__ import annotations
 import re
 import sys
 
-from track3 import summariser
-from track3.marking import synthetic_banner
+from agentloop import summariser
+from agentloop.marking import synthetic_banner
 
 MAX_HISTORY_ITERS = 8
 MAX_FINDINGS_CHARS = 1200

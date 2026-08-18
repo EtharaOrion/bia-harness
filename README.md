@@ -32,19 +32,25 @@ under `tasks/`.
 │       ├── environment/Dockerfile       (python:3.12-slim + torch cpu)
 │       ├── solution/solve.sh
 │       └── tests/{test.sh, grader.py}
-├── runner/                              multi-task orchestrator
+├── runner/                              the CURRENT pipeline, and nothing else
 │   ├── harness.py                       --task <name|path> --variant <path> --backend {harbor,local,dry}
-│   ├── mount_variant.py                 mount_task(task, out, variant) reads mount.toml
-│   ├── ingest_result.py                 20-field canonical row -> runs.jsonl
-│   └── track3/                          code-driven refinement loop (agent authors code in-container)
+│   │                                    shared by both loops; stays here
+│   └── agentloop/                       code-driven refinement loop (agent authors code in-container)
 │       ├── loop.py                      CLI + refine(); the ledger is the loop state
 │       ├── harbor_config.py             builds/validates the harbor --config JSON
 │       ├── history.py                   renders prior iterations into agent-facing markdown
 │       ├── trial_io.py                  one trial dir -> one flat ledger row
 │       └── classify.py, judge.py, summariser.py, marking.py
-├── tests/                               pytest (38 tests, parametrized over tasks/*)
+├── tests/                               pytest for the current pipeline + task-level checks
 ├── records/                             upstream Track-3 reference (results history, baselines)
-├── legacy/                              Track-1 substrate + prior audit docs (not on run path)
+├── legacy/                              off the current run path
+│   ├── harness1/                        Track-1 substrate + prior audit docs
+│   └── harness2/                        planner-authors-the-variant loop (was runner/legacy_planner/)
+│       ├── orchestrator.py              run_loop(): the 7-stage host-side feedback loop
+│       ├── mount_variant.py             mount_task(task, out, variant) reads mount.toml
+│       ├── ingest_result.py             20-field canonical row -> runs.jsonl
+│       ├── llm_client.py, plan_writer.py, scaffold_policy.py, summarize.py
+│       └── tests/                       its own pytest suite, moved with it
 ├── runs.jsonl                           append-only ledger (task_id per row)
 ├── LICENSE, pyproject.toml, requirements.txt
 └── README.md, FLOW.md, COMMANDS.md
@@ -78,23 +84,23 @@ to {harbor,local,dry} → grader emits `reward.json` → ingest normalizes into
 
 ## Two refinement loops, and which one a task can use
 
-- **`runner/legacy_planner/orchestrator.run_loop`** (via `harness.py --attempts N`).
+- **`legacy/harness2/orchestrator.run_loop`** (via `harness.py --attempts N`).
   A planner LLM authors a candidate *outside* the container and the harness injects
   it as a `--variant` at mount time. This requires the task to declare a `[variant]`
   block in `mount.toml`, so it **cannot** work for a task whose `/workspace` ships
   inside the docker image — there is nothing to mount a variant into. Attempting it
   raises `harness.VariantDeliveryImpossible`. Serves `nanogpt-speedrun`.
-- **`runner/track3`**. The agent authors `/workspace/submission/optimizer.py` and
+- **`runner/agentloop`**. The agent authors `/workspace/submission/optimizer.py` and
   runs training *inside* the container; our code drives the outside of that loop.
   Each iteration renders prior results into markdown, injects it through
   `extra_instruction_paths` in a harbor `--config` JSON, launches the job, locates
   and parses the resulting trial, classifies the outcome, and appends one ledger row.
 
-Use `run_loop` when the harness owns the candidate; use `track3` when the container
+Use `run_loop` when the harness owns the candidate; use `agentloop` when the container
 owns it.
 
 ```bash
-python runner/track3/loop.py --task <name|uuid|path> --iterations N \
+python runner/agentloop/loop.py --task <name|uuid|path> --iterations N \
   [--start-at N] [--agent claude-code|openhands-sdk] \
   [--summarise] [--judge] [--harbor-bin PATH]
 ```
@@ -121,7 +127,7 @@ is slower than claude-code's `npm install`. If setup times out, raise
 On disk, per task:
 
 ```
-runs/track3/<slug>/
+runs/agentloop/<slug>/
 ├── ledger.jsonl                 one JSON row per iteration (append-only)
 ├── history/iterNN_history.md    the markdown injected into iteration NN
 ├── history/iterNN_facts.json    measured facts, checkpointed before LLM enrichment
@@ -133,7 +139,7 @@ runs/track3/<slug>/
 
 ### Reward
 
-`runner/track3/reward.py` scores an iteration from the steps it took to reach the
+`runner/agentloop/reward.py` scores an iteration from the steps it took to reach the
 target loss:
 
 ```
@@ -174,14 +180,16 @@ val_loss curve from a seed hash — no model, no data, no gradients. Those rows 
 prints a loud banner above the facts table. They must never be reported as real
 training results.
 
-The real harbor/docker path is covered by `tests/test_track3_integration.py`, which is
+The real harbor/docker path is covered by `tests/test_agentloop_integration.py`, which is
 opt-in: it only runs under `TRACK3_INTEGRATION=1` with docker and the task image
 present, because one iteration starts a real GPU container.
 
 ## Quickstart
 
 ```bash
-python -m pytest tests/
+# The suite is both trees (tests/ + legacy/harness2/tests/); run it with a bare
+# `pytest` so pyproject's testpaths apply. `pytest tests/` is the new-pipeline half.
+python -m pytest
 
 # Task 1 with variant swap
 python runner/harness.py --task nanogpt-speedrun \
@@ -219,7 +227,7 @@ which defaults to 2. `--llm-retries R`, default 3, applies only to planner LLM
    `{reward: 0.0-1.0, ...metrics}` JSON (to stdout for the runner path, or
    to `/logs/verifier/reward.json` for the Harbor `test.sh` path).
 4. Smoke-test: `python runner/harness.py --task <my-task> --seeds 1 --backend dry`.
-5. `python -m pytest tests/` automatically parametrizes over all tasks and
+5. `python -m pytest` automatically parametrizes over all tasks and
    validates `task.toml` + `mount.toml` for your new task.
 
 ## Not on this machine
@@ -232,4 +240,5 @@ CPU host: scaffold + logic verified via `--backend dry`. GPU host: use
 Policy merged from Prime Intellect's `experiments-autonomous-speedrunning`;
 Track-3 substrate from `KellerJordan/modded-nanogpt`. See `policy/README.md`
 for full lineage. Historical audit docs and Track-1 code preserved under
-`legacy/`.
+`legacy/harness1/`; the superseded planner-authors-the-variant loop under
+`legacy/harness2/`.

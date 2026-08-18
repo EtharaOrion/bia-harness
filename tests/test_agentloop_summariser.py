@@ -1,4 +1,4 @@
-"""Tests for track3.summariser, ported from track3-pipeline/tools/summarize.py.
+"""Tests for agentloop.summariser, ported from track3-pipeline/tools/summarize.py.
 
 This module writes the prose that is injected into the NEXT iteration's prompt,
 so the failure modes that matter are not "does it call the API" but:
@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from track3.summariser import (
+from agentloop.summariser import (
     API_KEY_STUB,
     BACKOFF_BASE_SEC,
     BACKOFF_MAX_SEC,
@@ -40,7 +40,7 @@ from track3.summariser import (
     summarize_iteration,
     trajectory_slice,
 )
-import track3.summariser as summariser
+import agentloop.summariser as summariser
 
 
 # --- network firewall ---------------------------------------------------

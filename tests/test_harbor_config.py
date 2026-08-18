@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from track3.harbor_config import (
+from agentloop.harbor_config import (
     HarborConfigError,
     HarborUnavailable,
     agent_env,
@@ -22,7 +22,7 @@ from track3.harbor_config import (
 )
 
 try:
-    from track3.harbor_config import _load_job_config_cls
+    from agentloop.harbor_config import _load_job_config_cls
 
     _load_job_config_cls()
     HARBOR_OK = True
@@ -142,13 +142,13 @@ def test_job_shape_matches_reference(cfg, task_dir):
     assert cfg["tasks"] == [{"path": str(task_dir)}]
 
 
-def test_jobs_dir_is_under_runs_track3(cfg, run_root, task_dir):
+def test_jobs_dir_is_under_runs_agentloop(cfg, run_root, task_dir):
     from harness import resolve_task_uuid
 
     uuid = resolve_task_uuid(task_dir)
     assert cfg["jobs_dir"] == str(run_root / "jobs")
-    assert "/runs/track3/" in cfg["jobs_dir"]
-    assert cfg["jobs_dir"].endswith(f"/runs/track3/{uuid}/jobs")
+    assert "/runs/agentloop/" in cfg["jobs_dir"]
+    assert cfg["jobs_dir"].endswith(f"/runs/agentloop/{uuid}/jobs")
 
 
 def test_run_root_is_inside_this_harness(task_dir, run_root):
@@ -156,15 +156,15 @@ def test_run_root_is_inside_this_harness(task_dir, run_root):
     [task].name when task.toml carries no uuid -- as this task's does not."""
     from harness import HARNESS_ROOT, resolve_task_uuid
 
-    assert run_root == HARNESS_ROOT / "runs" / "track3" / resolve_task_uuid(task_dir)
-    assert run_root.is_relative_to(HARNESS_ROOT / "runs" / "track3")
+    assert run_root == HARNESS_ROOT / "runs" / "agentloop" / resolve_task_uuid(task_dir)
+    assert run_root.is_relative_to(HARNESS_ROOT / "runs" / "agentloop")
 
 
 def test_run_root_honours_explicit_harness_root(task_dir, tmp_path):
     from harness import resolve_task_uuid
 
     root = resolve_run_root(task_dir, harness_root=tmp_path)
-    assert root == tmp_path / "runs" / "track3" / resolve_task_uuid(task_dir)
+    assert root == tmp_path / "runs" / "agentloop" / resolve_task_uuid(task_dir)
 
 
 def test_cfg_never_points_at_the_production_pipeline_tree(cfg):

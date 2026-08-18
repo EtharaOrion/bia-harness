@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
+# legacy/harness2/tests/<file> -> tests -> harness2 -> legacy -> harness root
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(HARNESS_ROOT / "runner"))
 
 import harness  # noqa: E402

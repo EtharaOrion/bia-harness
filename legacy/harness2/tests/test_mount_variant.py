@@ -4,7 +4,8 @@ import pytest
 
 import mount_variant
 
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
+# legacy/harness2/tests/<file> -> tests -> harness2 -> legacy -> harness root
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
 SPEEDRUN_TASK = HARNESS_ROOT / "tasks" / "nanogpt-speedrun"
 SMOKE_TASK = HARNESS_ROOT / "tasks" / "nanogpt-smoke"
 

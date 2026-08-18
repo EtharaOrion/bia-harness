@@ -17,7 +17,7 @@ Two things about that class are load-bearing and easy to get wrong:
    real field sets and raises `HarborConfigError`. See `_assert_no_unknown_keys`.
 
 Shape mirrors the proven reference at track3-pipeline/jobs/agentic.json, except
-`jobs_dir` points inside this harness (`runs/track3/<task-uuid>/jobs`) so nothing
+`jobs_dir` points inside this harness (`runs/agentloop/<task-uuid>/jobs`) so nothing
 is ever written into that read-only production tree.
 """
 
@@ -125,8 +125,8 @@ def _load_job_config_cls() -> type:
 
 
 def resolve_run_root(task_dir: Path, harness_root: Path = HARNESS_ROOT) -> Path:
-    """Per-task run root: `<harness_root>/runs/track3/<task-uuid>`."""
-    return Path(harness_root) / "runs" / "track3" / resolve_task_uuid(Path(task_dir))
+    """Per-task run root: `<harness_root>/runs/agentloop/<task-uuid>`."""
+    return Path(harness_root) / "runs" / "agentloop" / resolve_task_uuid(Path(task_dir))
 
 
 def agent_env(

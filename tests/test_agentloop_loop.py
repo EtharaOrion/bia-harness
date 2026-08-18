@@ -34,7 +34,7 @@ was measured. And a second `refine` on the same task must be refused outright, b
 one ledger and one iteration counter.
 
 The reward is likewise no longer the verifier's. `read_trial` computes it from the
-fixture's own loss curve via `track3.reward`, at FULL log density: the two seeds first
+fixture's own loss curve via `agentloop.reward`, at FULL log density: the two seeds first
 reach 3.28 at steps 3150 and 3175, so (3500-3175)/600 = 0.541666... is the number
 every assertion below expects, replacing the fixture verifier's 0.5. It is NOT read
 off the thinned `parent_curve`, which would say 3250 / 0.41666... and would make the
@@ -54,9 +54,9 @@ from pathlib import Path
 
 import pytest
 
-from track3 import judge, summariser
-from track3.harbor_config import HarborUnavailable, build_base_cfg, resolve_run_root
-from track3.loop import judge_trajectory, load_ledger, main, refine, run_iteration
+from agentloop import judge, summariser
+from agentloop.harbor_config import HarborUnavailable, build_base_cfg, resolve_run_root
+from agentloop.loop import judge_trajectory, load_ledger, main, refine, run_iteration
 
 FIXTURE_TRIAL = Path(__file__).parent / "fixtures" / "track3_trial"
 TASK_DIRNAME = "2739a678-1759-516d-8ba7-1cd023267ea8"
@@ -145,7 +145,7 @@ def no_real_subprocess(monkeypatch):
     host's real daemon -- and could reach a real removal. Every test that needs a
     process overrides this with its own double.
     """
-    from track3 import loop
+    from agentloop import loop
 
     def _boom(cmd, *a, **k):  # pragma: no cover - only runs if a stub is missing
         raise AssertionError(f"test attempted to launch a real process: {cmd}")
@@ -206,7 +206,7 @@ FAKE_HARBOR_KWARGS = ("produce_trial", "returncode", "docker_calls", "ps_outputs
 
 def iterate(monkeypatch, i, base_cfg, history, tmp_path, task_dir, **kw):
     """Run one iteration against the fake harbor; return (row, recorded calls)."""
-    from track3 import loop
+    from agentloop import loop
 
     calls: list = []
     monkeypatch.setattr(
@@ -391,7 +391,7 @@ def test_ledger_row_appended_when_both_judge_and_summariser_fail(
     monkeypatch, task_dir, tmp_path
 ):
     """Total enrichment failure still yields a durable, complete ledger row."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(
@@ -443,7 +443,7 @@ def test_default_run_iteration_calls_neither_judge_nor_summariser(
 def test_default_refine_calls_neither_judge_nor_summariser(
     monkeypatch, task_dir, tmp_path
 ):
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
@@ -492,7 +492,7 @@ def _seed_ledger(path: Path, n: int) -> None:
 
 def test_resumes_from_ledger_length(monkeypatch, task_dir, tmp_path):
     """An interrupted campaign restarts where it stopped, with no bookkeeping flag."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     _seed_ledger(tmp_path / "ledger.jsonl", 2)
@@ -506,7 +506,7 @@ def test_resumes_from_ledger_length(monkeypatch, task_dir, tmp_path):
 
 
 def test_start_at_overrides_ledger_length(monkeypatch, task_dir, tmp_path):
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     _seed_ledger(tmp_path / "ledger.jsonl", 2)
@@ -523,7 +523,7 @@ def test_prior_rows_are_rendered_into_the_next_prompt(
     monkeypatch, task_dir, tmp_path
 ):
     """Resuming is only useful if the recovered rows actually reach the agent."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     _seed_ledger(tmp_path / "ledger.jsonl", 2)
@@ -621,14 +621,14 @@ def test_invalid_cfg_is_rejected_before_harbor_is_launched(
 ):
     """Validation is worthless if it happens after the container starts."""
     try:
-        from track3.harbor_config import _load_job_config_cls
+        from agentloop.harbor_config import _load_job_config_cls
 
         _load_job_config_cls()
     except HarborUnavailable as exc:  # pragma: no cover - host without harbor
         pytest.skip(f"harbor not importable: {exc}")
 
     bad = dict(base_cfg, modle_name="typo")
-    from track3 import loop
+    from agentloop import loop
 
     calls: list = []
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor(calls))
@@ -665,7 +665,7 @@ def test_no_trial_produced_yields_a_sparse_row(
 
 def test_sparse_row_is_renderable_as_history(monkeypatch, task_dir, tmp_path):
     """The next iteration must survive a predecessor that produced no trial."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run",
@@ -679,7 +679,7 @@ def test_sparse_row_is_renderable_as_history(monkeypatch, task_dir, tmp_path):
 def test_harbor_timeout_is_recorded_rather_than_raised(
     monkeypatch, base_cfg, tmp_path, task_dir
 ):
-    from track3 import loop
+    from agentloop import loop
 
     def _timeout(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd, 1)
@@ -700,7 +700,7 @@ def test_timeout_defaults_to_none_at_every_layer(monkeypatch, task_dir, tmp_path
     """No limit unless asked for -- a legitimate multi-hour GPU job must not be killed."""
     import inspect
 
-    from track3 import loop
+    from agentloop import loop
 
     for fn in (run_iteration, refine):
         assert inspect.signature(fn).parameters["timeout"].default is None, fn.__name__
@@ -713,7 +713,7 @@ def test_timeout_defaults_to_none_at_every_layer(monkeypatch, task_dir, tmp_path
 
 
 def test_refine_threads_the_timeout_into_subprocess(monkeypatch, task_dir, tmp_path):
-    from track3 import loop
+    from agentloop import loop
 
     calls: list = []
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
@@ -729,7 +729,7 @@ def test_main_timeout_flag_reaches_subprocess_run(monkeypatch, task_dir, tmp_pat
     path from the CLI ever passed it, so `timeout=None` was the only value harbor was
     ever launched with and the TimeoutExpired handler was unreachable code.
     """
-    from track3 import loop
+    from agentloop import loop
 
     calls: list = []
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
@@ -744,7 +744,7 @@ def test_main_timeout_flag_reaches_subprocess_run(monkeypatch, task_dir, tmp_pat
 
 
 def test_timeout_flag_accepts_fractional_seconds(monkeypatch, task_dir, tmp_path):
-    from track3 import loop
+    from agentloop import loop
 
     calls: list = []
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
@@ -756,7 +756,7 @@ def test_timeout_flag_accepts_fractional_seconds(monkeypatch, task_dir, tmp_path
 
 def test_timeout_help_states_the_default_explicitly():
     """"default: None" has to be in the help text; an invisible default is a trap."""
-    from track3 import loop
+    from agentloop import loop
 
     help_text = loop.build_parser().format_help()
     assert "--timeout" in help_text
@@ -770,7 +770,7 @@ def test_timeout_through_refine_records_124_and_does_not_propagate(
     monkeypatch, task_dir, tmp_path
 ):
     """A wedged container must end as a ledger row, not as a hung campaign."""
-    from track3 import loop
+    from agentloop import loop
 
     def _timeout(cmd, **kwargs):
         if Path(str(cmd[0])).name == "docker":
@@ -859,7 +859,7 @@ def test_cleanup_failure_does_not_lose_the_row(
     monkeypatch, base_cfg, tmp_path, task_dir
 ):
     """A cleanup failure costs some disk. Losing the row costs the GPU hours."""
-    from track3 import loop
+    from agentloop import loop
 
     inner = fake_harbor([], ps_outputs=["", "leaked_one\n"])
 
@@ -881,7 +881,7 @@ def test_missing_docker_binary_is_skipped_silently(
     monkeypatch, base_cfg, tmp_path, task_dir, capsys
 ):
     """A host that only rehearses the loop has no docker; that is not an error."""
-    from track3 import loop
+    from agentloop import loop
 
     inner = fake_harbor([])
 
@@ -902,7 +902,7 @@ def test_cleanup_runs_even_when_harbor_times_out(
     monkeypatch, base_cfg, tmp_path, task_dir
 ):
     """The timed-out case is exactly the case that leaves a container behind."""
-    from track3 import loop
+    from agentloop import loop
 
     docker_calls: list = []
     ps = ["", "wedged_main\n"]
@@ -949,7 +949,7 @@ def test_keyboardinterrupt_still_writes_the_ledger_row_then_reraises(
     """The row is appended AFTER run_iteration returns, so a Ctrl-C used to lose a
     completed multi-hour trial outright. Whatever was measured must reach the ledger.
     """
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", _interrupting_harbor())
@@ -968,7 +968,7 @@ def test_keyboardinterrupt_still_writes_the_ledger_row_then_reraises(
 def test_keyboardinterrupt_with_no_trial_still_writes_a_sparse_row(
     monkeypatch, task_dir, tmp_path
 ):
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run",
@@ -987,7 +987,7 @@ def test_keyboardinterrupt_cleans_up_the_containers_it_started(
     monkeypatch, task_dir, tmp_path
 ):
     """Ctrl-C is the orphan case: harbor dies, its containers do not."""
-    from track3 import loop
+    from agentloop import loop
 
     docker_calls: list = []
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
@@ -1004,7 +1004,7 @@ def test_keyboardinterrupt_stops_the_campaign_rather_than_continuing(
     monkeypatch, task_dir, tmp_path
 ):
     """Ctrl-C means stop: iteration 2 must never launch."""
-    from track3 import loop
+    from agentloop import loop
 
     launches: list = []
     inner = _interrupting_harbor()
@@ -1053,7 +1053,7 @@ def test_second_concurrent_refine_is_refused_with_a_clear_error(
     share run_root, ledger.jsonl, `start = len(rows)+1`, job_name and .cfg_iterNN.json.
     Left unguarded they interleave and corrupt each other's numbering.
     """
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", _never_called("harbor"))
@@ -1071,7 +1071,7 @@ def test_a_busy_run_root_launches_nothing_and_writes_nothing(
     monkeypatch, task_dir, tmp_path
 ):
     """Refusal must happen before any side effect, or the guard is theatre."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", _never_called("harbor"))
@@ -1086,7 +1086,7 @@ def test_a_busy_run_root_launches_nothing_and_writes_nothing(
 
 def test_lock_is_released_when_refine_returns(monkeypatch, task_dir, tmp_path):
     """A lock that outlives its run turns a resumable campaign into a dead one."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
@@ -1104,7 +1104,7 @@ def test_lock_is_released_when_the_iteration_is_interrupted(
     monkeypatch, task_dir, tmp_path
 ):
     """Ctrl-C must not leave the task unrunnable until someone finds the lock file."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", _interrupting_harbor())
@@ -1117,7 +1117,7 @@ def test_lock_is_released_when_the_iteration_is_interrupted(
 
 
 def test_lock_is_released_when_the_iteration_raises(monkeypatch, task_dir, tmp_path):
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop, "run_iteration",
@@ -1131,7 +1131,7 @@ def test_lock_is_released_when_the_iteration_raises(monkeypatch, task_dir, tmp_p
 
 
 def test_the_lock_file_lives_in_the_run_root(monkeypatch, task_dir, tmp_path):
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
@@ -1143,7 +1143,7 @@ def test_the_lock_file_lives_in_the_run_root(monkeypatch, task_dir, tmp_path):
 
 def test_two_different_tasks_do_not_block_each_other(monkeypatch, task_dir, tmp_path):
     """The lock is per run root. Serialising unrelated campaigns would be a new bug."""
-    from track3 import loop
+    from agentloop import loop
 
     other = tmp_path / "other-task"
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: other)
@@ -1216,7 +1216,7 @@ def test_load_ledger_is_silent_on_a_clean_ledger(tmp_path, capsys):
 
 def _write_spy(monkeypatch, needle: bytes):
     """Record every os.write whose payload contains `needle`, and pass it through."""
-    from track3 import loop
+    from agentloop import loop
 
     seen: list = []
     real = os.write
@@ -1236,7 +1236,7 @@ def test_ledger_row_is_written_in_a_single_write_call(monkeypatch, tmp_path):
     A row split across two writes can interleave with a concurrent appender and tear,
     so the whole line must leave in one syscall.
     """
-    from track3 import loop
+    from agentloop import loop
 
     seen = _write_spy(monkeypatch, b'"iteration"')
     row = {"iteration": 1, "parent_source": "x" * 18000, "reward": 0.5}
@@ -1249,7 +1249,7 @@ def test_ledger_row_is_written_in_a_single_write_call(monkeypatch, tmp_path):
 
 def test_a_row_far_larger_than_pipe_buf_round_trips(tmp_path):
     """`parent_source` carries up to 18000 chars, well past the 4096-byte guarantee."""
-    from track3 import loop
+    from agentloop import loop
 
     ledger = tmp_path / "ledger.jsonl"
     row = {"iteration": 1, "parent_source": "y" * 18000, "reward": 0.5}
@@ -1264,7 +1264,7 @@ def test_a_row_far_larger_than_pipe_buf_round_trips(tmp_path):
 
 def test_append_is_durable_before_it_returns(monkeypatch, tmp_path):
     """The next iteration's crash must not take the previous row's write cache with it."""
-    from track3 import loop
+    from agentloop import loop
 
     fsynced: list = []
     real = os.fsync
@@ -1279,7 +1279,7 @@ def test_append_is_durable_before_it_returns(monkeypatch, tmp_path):
 def test_append_appends_rather_than_truncating(tmp_path):
     ledger = tmp_path / "ledger.jsonl"
     _seed_ledger(ledger, 2)
-    from track3 import loop
+    from agentloop import loop
 
     loop._append_row(ledger, {"iteration": 3, "reward": 0.9})
 
@@ -1293,7 +1293,7 @@ def test_the_append_is_serialised_by_the_run_root_lock(
     a single writer. Proven from inside a live iteration, where a second campaign
     would be trying to append.
     """
-    from track3 import loop
+    from agentloop import loop
 
     contended: list = []
     inner = fake_harbor([])
@@ -1337,7 +1337,7 @@ def _seed_jobs(jobs_dir: Path, n: int) -> list[Path]:
 
 def _run_with_jobs(monkeypatch, task_dir, tmp_path, prior=3, **kw):
     """Resume a campaign that already has `prior` job dirs on disk, and run one more."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     _seed_ledger(tmp_path / "ledger.jsonl", prior)
@@ -1384,7 +1384,7 @@ def test_pruning_failure_is_not_fatal_and_keeps_the_row(
     monkeypatch, task_dir, tmp_path
 ):
     """A full or read-only disk must not turn a completed iteration into an exception."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop.shutil, "rmtree",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
@@ -1396,7 +1396,7 @@ def test_pruning_failure_is_not_fatal_and_keeps_the_row(
 
 def test_an_interrupted_iteration_prunes_nothing(monkeypatch, task_dir, tmp_path):
     """Ctrl-C is not consent to delete artifacts."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     _seed_ledger(tmp_path / "ledger.jsonl", 3)
@@ -1411,7 +1411,7 @@ def test_an_interrupted_iteration_prunes_nothing(monkeypatch, task_dir, tmp_path
 
 
 def test_main_keep_jobs_flag_prunes(monkeypatch, task_dir, tmp_path):
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     _seed_ledger(tmp_path / "ledger.jsonl", 3)
@@ -1427,7 +1427,7 @@ def test_main_keep_jobs_flag_prunes(monkeypatch, task_dir, tmp_path):
 
 
 def test_keep_jobs_help_states_that_the_default_deletes_nothing():
-    from track3 import loop
+    from agentloop import loop
 
     help_text = loop.build_parser().format_help()
     idx = help_text.rindex("--keep-jobs")  # the options block, not the usage line
@@ -1448,7 +1448,7 @@ def test_written_cfg_never_points_at_the_production_tree(
     real_run_root = resolve_run_root(task_dir)
     cfg = build_base_cfg(task_dir, real_run_root, job_name="isolationprobe")
 
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([], produce_trial=False))
     run_iteration(1, cfg, "", run_root=tmp_path, task_dir=task_dir,
@@ -1459,14 +1459,14 @@ def test_written_cfg_never_points_at_the_production_tree(
 
     assert "track3-pipeline" not in raw
     jobs_dir = Path(written["jobs_dir"])
-    assert "runs" in jobs_dir.parts and "track3" in jobs_dir.parts
-    assert jobs_dir.parts.index("runs") + 1 == jobs_dir.parts.index("track3")
+    assert "runs" in jobs_dir.parts and "agentloop" in jobs_dir.parts
+    assert jobs_dir.parts.index("runs") + 1 == jobs_dir.parts.index("agentloop")
     assert task_slug in jobs_dir.parts
 
 
-def test_run_root_is_under_runs_track3(task_dir, task_slug):
+def test_run_root_is_under_runs_agentloop(task_dir, task_slug):
     parts = resolve_run_root(task_dir).parts
-    assert parts[-3:] == ("runs", "track3", task_slug)
+    assert parts[-3:] == ("runs", "agentloop", task_slug)
 
 
 # --------------------------------------------------------------------------- #
@@ -1476,7 +1476,7 @@ def test_run_root_is_under_runs_track3(task_dir, task_slug):
 
 def test_main_with_zero_iterations_is_a_noop(monkeypatch, task_dir, tmp_path, capsys):
     """`--iterations 0` inspects an empty ledger; it must not IndexError on rows[-1]."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
 
@@ -1493,7 +1493,7 @@ def test_main_with_zero_iterations_is_a_noop(monkeypatch, task_dir, tmp_path, ca
 def test_main_runs_and_reports_the_best_iteration(
     monkeypatch, task_dir, tmp_path, capsys
 ):
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
@@ -1511,7 +1511,7 @@ def test_main_runs_and_reports_the_best_iteration(
 
 def test_main_default_invocation_enriches_nothing(monkeypatch, task_dir, tmp_path):
     """A bare CLI run must reach no LLM at all -- the whole point of the unwiring."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
@@ -1529,7 +1529,7 @@ def test_main_default_invocation_enriches_nothing(monkeypatch, task_dir, tmp_pat
 
 def test_main_opt_in_flags_enable_enrichment(monkeypatch, task_dir, tmp_path):
     """The code paths are unwired, not removed: --judge/--summarise bring them back."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
@@ -1549,7 +1549,7 @@ def test_main_rejects_the_retired_opt_out_flags(monkeypatch, task_dir, tmp_path)
     Left as an ignored argument it would read as "judging is off because I asked",
     hiding the fact that it is off unconditionally.
     """
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     # argparse must reject before anything launches; this makes a regression fail
@@ -1567,7 +1567,7 @@ def test_main_rejects_the_retired_opt_out_flags(monkeypatch, task_dir, tmp_path)
 
 def _record_agent(monkeypatch, tmp_path):
     """Capture the agent_name build_base_cfg is actually called with."""
-    from track3 import loop
+    from agentloop import loop
 
     seen: dict = {}
     real = loop.build_base_cfg
@@ -1629,7 +1629,7 @@ def test_main_default_agent_is_claude_code(monkeypatch, task_dir, tmp_path):
 
 def test_main_rejects_an_unknown_agent(monkeypatch, task_dir, tmp_path):
     """An unrecognised agent must exit non-zero, not fall through to a harbor launch."""
-    from track3 import loop
+    from agentloop import loop
 
     monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
     monkeypatch.setattr(loop.subprocess, "run", _never_called("harbor"))

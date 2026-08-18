@@ -7,7 +7,8 @@ import pytest
 from mount_variant import _resolve_mount_config_path, mount_task
 
 
-HARNESS_ROOT = Path(__file__).resolve().parent.parent
+# legacy/harness2/tests/<file> -> tests -> harness2 -> legacy -> harness root
+HARNESS_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _make_task(tmp_path: Path, name: str) -> Path:

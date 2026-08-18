@@ -2,41 +2,41 @@
 
 Copy-paste recipes. Run everything from the repo root.
 
-## track3 refinement loop (primary path)
+## agentloop refinement loop (primary path)
 
 The agent authors `/workspace/submission/optimizer.py` and trains it inside the
 container; this drives the outside of that loop. Use it for `bia/track3nov` tasks.
 
 ```bash
 # resume-or-start a campaign (the ledger decides which)
-python runner/track3/loop.py --task 2739a678-1759-516d-8ba7-1cd023267ea8 --iterations 3
+python runner/agentloop/loop.py --task 2739a678-1759-516d-8ba7-1cd023267ea8 --iterations 3
 
 # force a specific iteration number
-python runner/track3/loop.py --task <name|uuid|path> --iterations 1 --start-at 7
+python runner/agentloop/loop.py --task <name|uuid|path> --iterations 1 --start-at 7
 
 # pick the in-container agent (both use the same Claude OAuth bridge)
-python runner/track3/loop.py --task <task> --iterations 2 --agent openhands-sdk
+python runner/agentloop/loop.py --task <task> --iterations 2 --agent openhands-sdk
 
 # opt in to the LLM judge / summariser (currently unwired by default)
-python runner/track3/loop.py --task <task> --iterations 2 --summarise --judge
+python runner/agentloop/loop.py --task <task> --iterations 2 --summarise --judge
 
 # point at a specific harbor build
 HARBOR_BIN=/home/bia-gpu/oer/.venv-harbor/bin/harbor \
-  python runner/track3/loop.py --task <task> --iterations 1
+  python runner/agentloop/loop.py --task <task> --iterations 1
 ```
 
 Inspect a campaign:
 
 ```bash
-cat runs/track3/<slug>/ledger.jsonl | python -m json.tool --json-lines
-cat runs/track3/<slug>/history/iter02_history.md      # what the agent was told
-cat runs/track3/<slug>/.cfg_iter02.json               # exact harbor config used
+cat runs/agentloop/<slug>/ledger.jsonl | python -m json.tool --json-lines
+cat runs/agentloop/<slug>/history/iter02_history.md      # what the agent was told
+cat runs/agentloop/<slug>/.cfg_iter02.json               # exact harbor config used
 ```
 
 Opt-in integration test (launches a real container, ~20s):
 
 ```bash
-TRACK3_INTEGRATION=1 python -m pytest tests/test_track3_integration.py -v
+TRACK3_INTEGRATION=1 python -m pytest tests/test_agentloop_integration.py -v
 ```
 
 ## Setup
@@ -67,7 +67,7 @@ harbor --version              # verify CLI in PATH
 ## Verify the harness
 
 ```bash
-python -m pytest tests/ -v
+python -m pytest -v
 ```
 
 The suite covers task grading, dry-run orchestration, ledger ingestion, mount
@@ -147,7 +147,7 @@ python runner/harness.py \
 
 ```bash
 # First mount the task (populates environment/train_gpt_simple.py from shared/)
-python runner/legacy_planner/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted_task
+python legacy/harness2/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted_task
 
 # Then run Harbor against the mounted directory
 harbor run \
@@ -161,14 +161,14 @@ harbor run \
 ### Oracle (calibrate wallclock + verify plumbing)
 
 ```bash
-python runner/legacy_planner/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted_task
+python legacy/harness2/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted_task
 harbor run -p /tmp/mounted_task -a oracle -n 1 --env docker
 ```
 
 ## Autonomous refinement loop (multiple attempts)
 
 The runner supports LLM-driven refinement. Passing `--attempts N > 1` delegates
-to `runner/legacy_planner/orchestrator.run_loop`, which builds an LLM system prompt from the
+to `legacy/harness2/orchestrator.run_loop`, which builds an LLM system prompt from the
 shared `policy/AGENTS.md` + the task's own `instruction.md` + the auto-refreshed
 `policy/<slug>/plan.md` + `goal.md`, calls the LLM with tool_use tools
 (`write_variant`, `append_thread`, `update_plan_section`, `add_ruled_down`),
@@ -246,7 +246,7 @@ mkdir -p tasks/my-task/{environment,solution,tests}
 chmod +x tasks/my-task/solution/solve.sh tasks/my-task/tests/test.sh
 
 # Verify schema
-python -m pytest tests/ -k my-task -v
+python -m pytest -k my-task -v
 
 # Smoke-test wiring
 python runner/harness.py --task my-task --seeds 1 --backend dry
@@ -274,8 +274,8 @@ rm -rf runs/*      # clear work dirs (keep the runs/ folder)
 rm -f runs.jsonl   # clear the ledger
 
 # Rebuild Harbor image (per-task; must mount first)
-python runner/legacy_planner/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted
-docker build -t nanogpt-track3:cuda126 /tmp/mounted/environment/
+python legacy/harness2/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted
+docker build -t nanogpt-agentloop:cuda126 /tmp/mounted/environment/
 ```
 
 ## Troubleshooting
@@ -287,7 +287,7 @@ docker build -t nanogpt-track3:cuda126 /tmp/mounted/environment/
 | `ValueError: task X requires a --variant but none was provided` | `[variant].required=true` | Pass `--variant <path>` |
 | `FileNotFoundError: shared asset missing` | mount.toml references file not in `shared/` | Add file or fix path |
 | `FileNotFoundError: trainer missing at ...` (local backend) | Task didn't populate `environment/train_gpt_simple.py` | Add `[[shared]]` entry or pass `--variant` |
-| `docker build tasks/nanogpt-speedrun/environment/` fails | Trainer only injected at mount time — not checked in | `python runner/legacy_planner/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted && docker build /tmp/mounted/environment/` |
+| `docker build tasks/nanogpt-speedrun/environment/` fails | Trainer only injected at mount time — not checked in | `python legacy/harness2/mount_variant.py tasks/nanogpt-speedrun /tmp/mounted && docker build /tmp/mounted/environment/` |
 | Reward=0.0 on nanogpt-smoke with `--backend dry` | Dry log format is Track-3-shaped; smoke grader looks for python+torch lines | Expected — dry proves wiring, not task-specific grading |
 | `StopIteration` in `_load_data_shard` | CWD not the environment/ dir | Runner sets `cwd=env_dir`; if bypassing runner, `cd <mounted>/environment` first |
 | `NaN` val_loss with `torch==2.10` on A100 | Known upstream bug | Use `torch==2.11` (pinned) |

@@ -1,4 +1,4 @@
-"""Outcome classification for track3 iterations.
+"""Outcome classification for agentloop iterations.
 
 Ported from track3-pipeline/tools/refine.py (classify, _graded_step).
 """
@@ -57,7 +57,7 @@ def classify(reward: float, reason: str, n_seeds: int,
     if "frozen" in r or "reconcil" in r or "chain" in r:
         return "gate_fail"
     if r:
-        print(f"WARNING: track3.classify: UNRECOGNISED verifier reason {reason!r} "
+        print(f"WARNING: agentloop.classify: UNRECOGNISED verifier reason {reason!r} "
               f"-> outcome 'unknown'. No guidance block fires for 'unknown', so the "
               f"next iteration will be told nothing about this failure. Add the token "
               f"to RECOGNISED_REASON_TOKENS and to a branch in classify(). "

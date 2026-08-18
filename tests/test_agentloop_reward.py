@@ -1,7 +1,7 @@
 """The step-derived reward, computed from the loss curve rather than the verifier.
 
-The verifier and the LLM judge are currently UNWIRED (see `runner/track3/loop.py`),
-so `track3.reward` is the only thing that turns a run into a number. That makes two
+The verifier and the LLM judge are currently UNWIRED (see `runner/agentloop/loop.py`),
+so `agentloop.reward` is the only thing that turns a run into a number. That makes two
 properties load-bearing and worth asserting directly:
 
 * THE FORMULA IS LINEAR AND CLAMPED. `(BASELINE_STEPS - step) / (BASELINE_STEPS -
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from track3.reward import (
+from agentloop.reward import (
     BASELINE_STEPS,
     MIRRORED_FROM_GRADE_PY,
     TARGET_LOSS,
@@ -74,15 +74,15 @@ def _assert_no_drift(parsed: dict, source: str) -> None:
                 "TARGET_STEPS": TARGET_STEPS,
                 "TARGET_LOSS": TARGET_LOSS}
     drifted = [
-        f"  {name}: runner/track3/reward.py has {mirrored[name]!r}, "
+        f"  {name}: runner/agentloop/reward.py has {mirrored[name]!r}, "
         f"{source} has {parsed[name]!r}"
         for name in MIRRORED_FROM_GRADE_PY if mirrored[name] != parsed[name]
     ]
     assert not drifted, (
-        "track3.reward constants have DRIFTED from the task grader that owns them:\n"
+        "agentloop.reward constants have DRIFTED from the task grader that owns them:\n"
         + "\n".join(drifted)
         + "\nEvery reward in the campaign is being scored on stale numbers, with no "
-          "error surface. Update runner/track3/reward.py to match the task bundle "
+          "error surface. Update runner/agentloop/reward.py to match the task bundle "
           "(or fix the bundle), then re-run."
     )
 

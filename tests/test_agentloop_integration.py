@@ -1,6 +1,6 @@
-"""End-to-end integration tests for the track3 refinement loop: real harbor, real docker.
+"""End-to-end integration tests for the agentloop refinement loop: real harbor, real docker.
 
-Everything else in the track3 test suite replaces `subprocess.run` with a fake that
+Everything else in the agentloop test suite replaces `subprocess.run` with a fake that
 materialises a fixture trial. That proves the loop's logic but not that the config we
 build is one harbor will actually accept, nor that a real trial directory parses. This
 module closes that gap by launching the real binary against the real image -- and it is
@@ -22,7 +22,7 @@ functional ones, and they are the reason this file exists:
   read-only 65GB production tree this loop was ported from; a path leaking into
   `jobs_dir` or `tasks[].path` would write into it.
 * The run root is redirected into `tmp_path`, so a test run can never append to the
-  real campaign ledger under `runs/track3/`.
+  real campaign ledger under `runs/agentloop/`.
 
 CONTAINER HYGIENE. Harbor tears its compose project down, but a killed run leaves
 `task__<id>__env-main-1` and `task__<id>__env-harbor-docker-egress-control-sidecar-1`
@@ -42,8 +42,8 @@ from pathlib import Path
 
 import pytest
 
-from track3 import loop
-from track3.loop import refine
+from agentloop import loop
+from agentloop.loop import refine
 
 # --------------------------------------------------------------------------- #
 # constants

@@ -30,7 +30,7 @@ import argparse, json, os, pathlib, re, sys, time, urllib.request
 BRIDGE = os.environ.get("TRACK3_JUDGE_BRIDGE", "http://127.0.0.1:8765/v1/messages")
 
 _HERE = pathlib.Path(__file__).resolve().parent
-# runner/track3/judge.py -> runner/track3 -> runner -> repo root
+# runner/agentloop/judge.py -> runner/agentloop -> runner -> repo root
 _REPO_ROOT = _HERE.parent.parent
 
 
@@ -38,7 +38,7 @@ def _rubrics_path() -> pathlib.Path:
     """Resolve rubrics.jsonl from either location this file lives in.
 
     Shipped inside a task bundle it sits beside rubrics.jsonl; in this harness it sits in
-    runner/track3/ alongside a tasks/<task-uuid>/tests/ tree. One resolver keeps the two
+    runner/agentloop/ alongside a tasks/<task-uuid>/tests/ tree. One resolver keeps the two
     copies from diverging.
 
     Deliberately NOT resolved at import time: a checkout without rubrics must still be

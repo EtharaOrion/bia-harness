@@ -32,11 +32,11 @@ TASKS_ROOT = HARNESS_ROOT / "tasks"
 DEFAULT_LEDGER = HARNESS_ROOT / "runs.jsonl"
 
 sys.path.insert(0, str(HARNESS_ROOT / "runner"))
-# legacy_planner modules are still imported flat, not as legacy_planner.*
-sys.path.insert(0, str(HARNESS_ROOT / "runner" / "legacy_planner"))
+# legacy/harness2 modules are imported flat (`import orchestrator`), not as a package.
+sys.path.insert(0, str(HARNESS_ROOT / "legacy" / "harness2"))
 from mount_variant import mount_task  # noqa: E402
 from ingest_result import normalize, append  # noqa: E402
-from track3.marking import mark_reward_payload  # noqa: E402
+from agentloop.marking import mark_reward_payload  # noqa: E402
 
 
 def resolve_task(task_arg: str) -> Path:
