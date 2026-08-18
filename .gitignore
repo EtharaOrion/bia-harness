@@ -29,7 +29,7 @@ personal-docs/
 work/
 runs/
 policy/
-
+tasks/
 # Track-3 agentic loop run artifacts (bulk trial output, never committed)
 runs/track3/
 # Agent tool scratch

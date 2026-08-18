@@ -19,6 +19,8 @@ from pathlib import Path
 
 HARNESS_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HARNESS_ROOT / "runner"))
+# legacy_planner modules are still imported flat, not as legacy_planner.*
+sys.path.insert(0, str(HARNESS_ROOT / "runner" / "legacy_planner"))
 
 from llm_client import LLMResponse  # noqa: E402
 from orchestrator import run_loop  # noqa: E402
