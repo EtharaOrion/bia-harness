@@ -15,6 +15,7 @@ import pytest
 from track3.harbor_config import (
     HarborConfigError,
     HarborUnavailable,
+    agent_env,
     build_base_cfg,
     resolve_run_root,
     validate_cfg,
@@ -204,3 +205,108 @@ def test_build_base_cfg_returns_a_fresh_mutable_cfg(task_dir, run_root):
     a["retry"]["include_exceptions"].append("Nope")
     assert b["agents"][0]["env"]["ANTHROPIC_API_KEY"] == "oauth-placeholder"
     assert "Nope" not in b["retry"]["include_exceptions"]
+
+
+# --------------------------------------------------------------------------- #
+# agent selection -- claude-code vs openhands-sdk over the SAME OAuth bridge
+# --------------------------------------------------------------------------- #
+
+BRIDGE = "http://172.17.0.1:8765"
+
+
+def test_agent_env_for_claude_code_is_exactly_the_anthropic_pair():
+    """harbor/agents/installed/claude_code.py reads ANTHROPIC_BASE_URL + a key."""
+    assert agent_env("claude-code", BRIDGE) == {
+        "ANTHROPIC_BASE_URL": BRIDGE,
+        "ANTHROPIC_API_KEY": "oauth-placeholder",
+    }
+
+
+def test_agent_env_for_openhands_sdk_is_exactly_the_llm_pair():
+    """harbor/agents/installed/openhands_sdk.py reads LLM_BASE_URL + LLM_API_KEY,
+    and RAISES ValueError when LLM_API_KEY is unset -- so it is not optional."""
+    assert agent_env("openhands-sdk", BRIDGE) == {
+        "LLM_BASE_URL": BRIDGE,
+        "LLM_API_KEY": "oauth-placeholder",
+    }
+
+
+def test_agent_env_rejects_an_unknown_agent_and_names_the_supported_ones():
+    with pytest.raises(ValueError) as exc:
+        agent_env("bogus", BRIDGE)
+    msg = str(exc.value)
+    assert "bogus" in msg
+    assert "claude-code" in msg and "openhands-sdk" in msg
+
+
+def test_agent_env_honours_an_explicit_api_key():
+    assert agent_env("openhands-sdk", BRIDGE, api_key="sk-real")["LLM_API_KEY"] == "sk-real"
+
+
+@pytest.fixture
+def openhands_cfg(task_dir, run_root):
+    return build_base_cfg(task_dir, run_root, agent_name="openhands-sdk")
+
+
+def test_openhands_cfg_selects_the_openhands_agent(openhands_cfg):
+    assert openhands_cfg["agents"][0]["name"] == "openhands-sdk"
+
+
+def test_openhands_cfg_carries_llm_env_and_no_anthropic_key_anywhere(openhands_cfg):
+    """LiteLLM reads LLM_*; a stray ANTHROPIC_* would be dead weight that reads as
+    if the bridge were wired twice."""
+    env = openhands_cfg["agents"][0]["env"]
+    assert env == {"LLM_BASE_URL": BRIDGE, "LLM_API_KEY": "oauth-placeholder"}
+    assert "ANTHROPIC" not in json.dumps(openhands_cfg)
+
+
+def test_openhands_model_name_gets_the_litellm_provider_prefix(task_dir, run_root):
+    """LiteLLM routes by provider prefix: `anthropic/` is what makes it speak the
+    Anthropic Messages API, which is exactly what the bridge already serves."""
+    cfg = build_base_cfg(task_dir, run_root, agent_name="openhands-sdk",
+                         model_name="claude-opus-5")
+    assert cfg["agents"][0]["model_name"] == "anthropic/claude-opus-5"
+
+
+def test_an_already_prefixed_model_name_is_left_alone(task_dir, run_root):
+    cfg = build_base_cfg(task_dir, run_root, agent_name="openhands-sdk",
+                         model_name="anthropic/claude-sonnet-4")
+    assert cfg["agents"][0]["model_name"] == "anthropic/claude-sonnet-4"
+
+
+def test_claude_code_model_name_stays_bare(task_dir, run_root):
+    """The claude CLI wants an unprefixed model; prefixing it would break it. This
+    asymmetry with openhands-sdk is deliberate."""
+    cfg = build_base_cfg(task_dir, run_root, agent_name="claude-code",
+                         model_name="claude-opus-5")
+    assert cfg["agents"][0]["model_name"] == "claude-opus-5"
+
+
+def test_both_agent_configs_pass_the_real_harbor_schema(cfg, openhands_cfg):
+    """THE load-bearing one: harbor's own JobConfig must accept both, serialized
+    exactly as they will be written to disk."""
+    validate_cfg(json.loads(json.dumps(cfg)))
+    validate_cfg(json.loads(json.dumps(openhands_cfg)))
+
+
+def test_the_bridge_url_is_identical_for_both_agents(cfg, openhands_cfg):
+    """Same OAuth bridge, different env var names. If these ever diverge, one of
+    the two agents is talking to something else."""
+    assert cfg["agents"][0]["env"]["ANTHROPIC_BASE_URL"] == BRIDGE
+    assert openhands_cfg["agents"][0]["env"]["LLM_BASE_URL"] == BRIDGE
+
+
+def test_default_agent_is_still_claude_code(cfg):
+    """Adding an option must not change what an existing caller gets."""
+    assert cfg["agents"][0]["name"] == "claude-code"
+    assert cfg["agents"][0]["model_name"] == "claude-opus-5"
+
+
+def test_setup_timeout_multiplier_defaults_to_five_and_is_tunable(task_dir, run_root):
+    """openhands-sdk pip-installs into /opt/openhands-sdk-venv at setup, which is
+    slower than claude-code's npm install; raising this must not need an edit."""
+    assert build_base_cfg(task_dir, run_root)["agent_setup_timeout_multiplier"] == 5.0
+    cfg = build_base_cfg(task_dir, run_root, agent_name="openhands-sdk",
+                         setup_timeout_multiplier=12.0)
+    assert cfg["agent_setup_timeout_multiplier"] == 12.0
+    validate_cfg(cfg)

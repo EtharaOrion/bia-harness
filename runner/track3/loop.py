@@ -243,6 +243,7 @@ def run_iteration(i: int, base_cfg: dict, history: str, *,
 def refine(task, iterations: int = 3, *, start_at: int | None = None,
            summarise: bool = False, judge_enabled: bool = False,
            harbor_bin: str | None = None,
+           agent_name: str = "claude-code",
            base_cfg_overrides: dict | None = None) -> list[dict]:
     """Drive `iterations` refinement rounds over `task`, appending each to the ledger.
 
@@ -255,7 +256,7 @@ def refine(task, iterations: int = 3, *, start_at: int | None = None,
     ledger = run_root / "ledger.jsonl"
     harbor_bin = harbor_bin or resolve_harbor_bin()
 
-    base_cfg = build_base_cfg(task_dir, run_root)
+    base_cfg = build_base_cfg(task_dir, run_root, agent_name=agent_name)
     if base_cfg_overrides:
         base_cfg.update(base_cfg_overrides)
 
@@ -302,6 +303,11 @@ def main(argv=None) -> int:
                     help="EXPERIMENTAL, currently unwired: opt in to the LLM "
                          "trajectory grader. Off by default; its verdict is advisory "
                          "and never moves the reward.")
+    ap.add_argument("--agent", choices=["claude-code", "openhands-sdk"],
+                    default="claude-code",
+                    help="harbor agent to drive (default: claude-code). "
+                         "openhands-sdk reaches the SAME Claude OAuth bridge, via "
+                         "LiteLLM with an anthropic/-prefixed model.")
     ap.add_argument("--harbor-bin", default=None,
                     help="harbor executable (default: resolved from $HARBOR_BIN, "
                          "the sibling .venv-harbor, then PATH)")
@@ -310,7 +316,8 @@ def main(argv=None) -> int:
     rows = refine(args.task, iterations=args.iterations, start_at=args.start_at,
                   summarise=args.summarise,
                   judge_enabled=args.judge,
-                  harbor_bin=args.harbor_bin)
+                  harbor_bin=args.harbor_bin,
+                  agent_name=args.agent)
 
     print("\n=== summary ===")
     print(f"  iterations in ledger : {len(rows)}")

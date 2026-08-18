@@ -31,9 +31,11 @@ from typing import Any
 from harness import HARNESS_ROOT, resolve_task_uuid  # noqa: F401  (re-exported below)
 
 __all__ = [
+    "AGENT_ENV_KEYS",
     "HARBOR_PKG_PATH",
     "HarborConfigError",
     "HarborUnavailable",
+    "agent_env",
     "build_base_cfg",
     "resolve_run_root",
     "validate_cfg",
@@ -42,6 +44,25 @@ __all__ = [
 # harbor lives in its own venv (v0.21.0); our interpreter cannot see it by default.
 # Do NOT use `which harbor` -- that resolves to a stale 0.13.2 uv-tool install.
 HARBOR_PKG_PATH = "/home/bia-gpu/oer/.venv-harbor/lib/python3.13/site-packages"
+
+
+# Which (base_url, api_key) env pair each harbor agent actually reads. Both point
+# at the SAME Claude OAuth bridge; only the variable names differ.
+#   claude-code   -> harbor/agents/installed/claude_code.py reads ANTHROPIC_*.
+#   openhands-sdk -> harbor/agents/installed/openhands_sdk.py reads LLM_* and
+#                    RAISES ValueError when LLM_API_KEY is unset, so the key must
+#                    be present even though the bridge ignores its value.
+AGENT_ENV_KEYS: dict[str, tuple[str, str]] = {
+    "claude-code": ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
+    "openhands-sdk": ("LLM_BASE_URL", "LLM_API_KEY"),
+}
+
+# LiteLLM (which openhands-sdk drives) routes by provider prefix, and `anthropic/`
+# is what makes it speak the Anthropic Messages API the bridge already serves. The
+# claude CLI wants the model BARE and breaks on a prefix. This asymmetry is
+# deliberate -- do not "harmonize" the two.
+_LITELLM_PROVIDER_PREFIX = "anthropic/"
+_PREFIXED_MODEL_AGENTS = frozenset({"openhands-sdk"})
 
 
 class HarborUnavailable(RuntimeError):
@@ -108,6 +129,31 @@ def resolve_run_root(task_dir: Path, harness_root: Path = HARNESS_ROOT) -> Path:
     return Path(harness_root) / "runs" / "track3" / resolve_task_uuid(Path(task_dir))
 
 
+def agent_env(
+    agent_name: str, bridge_url: str, api_key: str = "oauth-placeholder"
+) -> dict[str, str]:
+    """The two env vars `agent_name` needs to reach the OAuth bridge.
+
+    Raises:
+        ValueError: `agent_name` is not one of `AGENT_ENV_KEYS`.
+    """
+    try:
+        url_key, key_key = AGENT_ENV_KEYS[agent_name]
+    except KeyError:
+        raise ValueError(
+            f"unsupported agent {agent_name!r}; "
+            f"supported agents: {', '.join(sorted(AGENT_ENV_KEYS))}"
+        ) from None
+    return {url_key: bridge_url, key_key: api_key}
+
+
+def _agent_model_name(agent_name: str, model_name: str) -> str:
+    """Add LiteLLM's provider prefix for the agents that route through it."""
+    if agent_name in _PREFIXED_MODEL_AGENTS and "/" not in model_name:
+        return f"{_LITELLM_PROVIDER_PREFIX}{model_name}"
+    return model_name
+
+
 def build_base_cfg(
     task_dir: Path,
     run_root: Path,
@@ -116,6 +162,7 @@ def build_base_cfg(
     model_name: str = "claude-opus-5",
     agent_name: str = "claude-code",
     bridge_url: str = "http://172.17.0.1:8765",
+    setup_timeout_multiplier: float = 5.0,
 ) -> dict[str, Any]:
     """Build the base JobConfig dict, in the shape proven by agentic.json.
 
@@ -128,16 +175,15 @@ def build_base_cfg(
         "jobs_dir": str(Path(run_root) / "jobs"),
         "n_attempts": 1,
         "n_concurrent_trials": 1,
-        "agent_setup_timeout_multiplier": 5.0,
+        # openhands-sdk pip-installs into /opt/openhands-sdk-venv at setup, slower
+        # than claude-code's npm install; raise this rather than editing the module.
+        "agent_setup_timeout_multiplier": setup_timeout_multiplier,
         "agents": [
             {
                 "name": agent_name,
                 # model_name/env belong to the agent, never to the job.
-                "model_name": model_name,
-                "env": {
-                    "ANTHROPIC_BASE_URL": bridge_url,
-                    "ANTHROPIC_API_KEY": "oauth-placeholder",
-                },
+                "model_name": _agent_model_name(agent_name, model_name),
+                "env": agent_env(agent_name, bridge_url),
             }
         ],
         "tasks": [{"path": str(task_dir)}],

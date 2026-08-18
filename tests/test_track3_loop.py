@@ -758,3 +758,81 @@ def test_main_rejects_the_retired_opt_out_flags(monkeypatch, task_dir, tmp_path)
     for flag in ("--no-judge", "--no-summarise"):
         with pytest.raises(SystemExit):
             main(["--task", str(task_dir), "--iterations", "1", flag])
+
+
+# --------------------------------------------------------------------------- #
+# agent selection -- the same OAuth bridge, driven by a different agent
+# --------------------------------------------------------------------------- #
+
+
+def _record_agent(monkeypatch, tmp_path):
+    """Capture the agent_name build_base_cfg is actually called with."""
+    from track3 import loop
+
+    seen: dict = {}
+    real = loop.build_base_cfg
+
+    def _spy(task_dir, run_root, **kw):
+        seen.update(kw)
+        return real(task_dir, run_root, **kw)
+
+    monkeypatch.setattr(loop, "build_base_cfg", _spy)
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", fake_harbor([]))
+    return seen
+
+
+def test_refine_threads_the_agent_name_into_the_config(
+    monkeypatch, task_dir, tmp_path
+):
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    refine(task_dir, iterations=1, harbor_bin="/nonexistent/harbor",
+           agent_name="openhands-sdk")
+
+    assert seen["agent_name"] == "openhands-sdk"
+    cfg = json.loads((tmp_path / ".cfg_iter01.json").read_text())
+    assert cfg["agents"][0]["name"] == "openhands-sdk"
+    assert cfg["agents"][0]["env"]["LLM_BASE_URL"] == "http://172.17.0.1:8765"
+    assert "ANTHROPIC" not in json.dumps(cfg)
+
+
+def test_refine_defaults_to_claude_code(monkeypatch, task_dir, tmp_path):
+    """Existing callers must keep getting today's behaviour, unchanged."""
+    _record_agent(monkeypatch, tmp_path)
+
+    refine(task_dir, iterations=1, harbor_bin="/nonexistent/harbor")
+
+    cfg = json.loads((tmp_path / ".cfg_iter01.json").read_text())
+    assert cfg["agents"][0]["name"] == "claude-code"
+    assert cfg["agents"][0]["env"]["ANTHROPIC_BASE_URL"] == "http://172.17.0.1:8765"
+
+
+def test_main_accepts_the_openhands_agent(monkeypatch, task_dir, tmp_path):
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    rc = main(["--task", str(task_dir), "--iterations", "1",
+               "--agent", "openhands-sdk", "--harbor-bin", "/nonexistent/harbor"])
+
+    assert rc == 0
+    assert seen["agent_name"] == "openhands-sdk"
+
+
+def test_main_default_agent_is_claude_code(monkeypatch, task_dir, tmp_path):
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    main(["--task", str(task_dir), "--iterations", "1",
+          "--harbor-bin", "/nonexistent/harbor"])
+
+    assert seen["agent_name"] == "claude-code"
+
+
+def test_main_rejects_an_unknown_agent(monkeypatch, task_dir, tmp_path):
+    """An unrecognised agent must exit non-zero, not fall through to a harbor launch."""
+    from track3 import loop
+
+    monkeypatch.setattr(loop, "resolve_run_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(loop.subprocess, "run", _never_called("harbor"))
+    with pytest.raises(SystemExit) as exc:
+        main(["--task", str(task_dir), "--iterations", "1", "--agent", "bogus"])
+    assert exc.value.code != 0
