@@ -2,6 +2,13 @@
 
 This folder IS the harness. No Python here. Just markdown that an autonomous orchestrator (Claude Code / Codex / any LLM CLI agent) reads at session start.
 
+Scope: this serves the planner-authors-variant path in `legacy/harness2/`, which
+scaffolds these files via `scaffold_policy.py` and reads them in
+`orchestrator.build_system_prompt`. The current pipeline, `runner/agentloop/loop.py`,
+does not read `policy/` — its agent authors code inside the container and receives
+prior-iteration history through `extra_instruction_paths`. See `README.md` and
+`FLOW.md` at the repo root.
+
 ## Files
 
 - **AGENTS.md** — Conduct constitution. 6 always-law rules, subagent doctrine, paper + idea templates, pruning procedure, SLURM conventions, git rules. Read first.
@@ -17,7 +24,7 @@ Prime Intellect's Auto-NanoGPT project (blog: https://www.primeintellect.ai/auto
 - **Load-bearing exactly where the intelligence sits** (the rules, the doctrine, the frontier).
 - **Immune to schema drift** — a new modifier doesn't require a code change.
 
-The Python part of this repo (`../runner/`, `../tasks/`) is thin plumbing. The intelligence is here.
+For the planner path this folder serves, the Python in `legacy/harness2/` is thin plumbing and the intelligence is here. That trade is reversed in `runner/agentloop/`, where the loop is code and the agent's steering is generated per iteration rather than authored in markdown.
 
 ## Version lineage
 
