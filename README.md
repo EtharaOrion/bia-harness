@@ -302,24 +302,26 @@ so the word describes where the data came from. It does not refer to the old
 ## Quickstart
 
 ```bash
-# The suite. pyproject sets testpaths = ["tests"], so a bare `pytest` runs the
-# new pipeline: agentloop, the shared harness, the emitter and the converter.
+# The suite is BOTH trees. pyproject sets testpaths = ["tests", "legacy/harness2/tests"],
+# so the suite command is a BARE `pytest` with no path argument.
 pytest
 
-# The legacy planner substrate. Still passes, excluded from the default run
-# because it guards a path agentloop does not use. Opt in when you touch it.
-pytest legacy/harness2/tests
+# The new-pipeline half only (agentloop + the shared harness) — fully green.
+pytest tests/
 ```
 
-As of this writing both trees are green:
+As of this writing:
 
 | command | result |
 |---|---|
-| `pytest` | 557 passed, 2 skipped |
-| `pytest legacy/harness2/tests` | 207 passed, 11 skipped |
+| `pytest` | 3 failed, 761 passed, 13 skipped |
+| `pytest tests/` | 557 passed, 2 skipped |
+| `pytest legacy/harness2/tests` | 3 failed, 204 passed, 11 skipped |
 
-`addopts = "-q"` suppresses the final counts line. For exact numbers run
-`pytest --junitxml=/tmp/r.xml` and read the `testsuite` attributes.
+All three failures are `test_task_toml_parses`, for the two `bia/track3nov` bundles and
+`minicalc`, whose `task.toml` declares `schema_version = "1.4"` while that test asserts
+`version = "1.0"`. They are pre-existing and unrelated to the pipeline; they are a stale
+assertion about a newer Harbor schema, not a broken task.
 
 ```bash
 # Task 1 with variant swap (any .py works; this one is a real prior candidate)

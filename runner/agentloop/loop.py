@@ -500,6 +500,8 @@ def refine(task, iterations: int = 3, *, start_at: int | None = None,
            summarise: bool = False, judge_enabled: bool = False,
            harbor_bin: str | None = None,
            agent_name: str = "claude-code",
+           model_name: str | None = None,
+           bridge_url: str | None = None,
            base_cfg_overrides: dict | None = None,
            timeout: float | None = None,
            keep_jobs: int | None = None) -> list[dict]:
@@ -518,7 +520,11 @@ def refine(task, iterations: int = 3, *, start_at: int | None = None,
     # the `start` derivation: taking it any later would leave the read of the ledger
     # racing the other run's append.
     with run_root_lock(run_root, task_desc=str(task_dir)):
-        base_cfg = build_base_cfg(task_dir, run_root, agent_name=agent_name)
+        # Omitted rather than forwarded as None: `build_base_cfg` carries its own
+        # defaults, and a null would override them instead of falling back to them.
+        cfg_kw = {k: v for k, v in (("model_name", model_name),
+                                    ("bridge_url", bridge_url)) if v is not None}
+        base_cfg = build_base_cfg(task_dir, run_root, agent_name=agent_name, **cfg_kw)
         if base_cfg_overrides:
             base_cfg.update(base_cfg_overrides)
 
@@ -576,11 +582,25 @@ def build_parser() -> argparse.ArgumentParser:
                     help="EXPERIMENTAL, currently unwired: opt in to the LLM "
                          "trajectory grader. Off by default; its verdict is advisory "
                          "and never moves the reward.")
-    ap.add_argument("--agent", choices=["claude-code", "openhands-sdk"],
+    ap.add_argument("--agent", choices=["claude-code", "openhands-sdk", "codex"],
                     default="claude-code",
                     help="harbor agent to drive (default: claude-code). "
                          "openhands-sdk reaches the SAME Claude OAuth bridge, via "
-                         "LiteLLM with an anthropic/-prefixed model.")
+                         "LiteLLM with an anthropic/-prefixed model. codex reads "
+                         "OPENAI_BASE_URL/OPENAI_API_KEY and needs its own "
+                         "OpenAI-compatible bridge -- pass --bridge-url.")
+    ap.add_argument("--model", default=None,
+                    help="model name handed to the agent. Default: unset, which "
+                         "keeps the agent's default (claude-opus-5, gaining the "
+                         "anthropic/ prefix for openhands-sdk only). Pass a codex "
+                         "model here when --agent codex, e.g. gpt-5-codex.")
+    ap.add_argument("--bridge-url", default=None,
+                    help="base URL the agent is pointed at. Default: unset, which "
+                         "keeps the agent's default, the Claude bridge on "
+                         "http://172.17.0.1:8765; the Codex bridge is on "
+                         "http://172.17.0.1:8788. 172.17.0.1 is the docker gateway, "
+                         "which is how the container reaches a bridge on the host -- "
+                         "127.0.0.1 would resolve to the container itself.")
     ap.add_argument("--harbor-bin", default=None,
                     help="harbor executable (default: resolved from $HARBOR_BIN, "
                          "the sibling .venv-harbor, then PATH)")
@@ -605,6 +625,8 @@ def main(argv=None) -> int:
                   judge_enabled=args.judge,
                   harbor_bin=args.harbor_bin,
                   agent_name=args.agent,
+                  model_name=args.model,
+                  bridge_url=args.bridge_url,
                   timeout=args.timeout,
                   keep_jobs=args.keep_jobs)
 

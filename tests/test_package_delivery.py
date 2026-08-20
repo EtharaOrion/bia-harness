@@ -71,9 +71,27 @@ def build_task_dir(root):
     return task
 
 
+def _model_for(model_name, i):
+    """The model that ran iteration `i`.
+
+    A campaign is no longer single-model: `model_name` may be one name for the
+    whole run root, or a per-iteration mapping/sequence when iterations were run
+    by different agents.
+    """
+    if isinstance(model_name, dict):
+        return model_name[i]
+    if isinstance(model_name, (list, tuple)):
+        return model_name[i - 1]
+    return model_name
+
+
 def build_run_root(root, n_iters=3, verifier_style="txt", secret=FAKE_SECRET,
                    task_dir=None, model_name="claude-opus-5"):
-    """Build a synthetic agentloop run root with `n_iters` completed iterations."""
+    """Build a synthetic agentloop run root with `n_iters` completed iterations.
+
+    `model_name` is one name, or a `{iteration: name}` mapping / per-iteration
+    sequence for a campaign whose iterations were run by different models.
+    """
     task_dir = task_dir or build_task_dir(root)
     run_root = root / "runs" / "agentloop" / "17d66d37-7b3f-57d3-93ad-0263fc495147"
     trial_ids = {}
@@ -91,8 +109,9 @@ def build_run_root(root, n_iters=3, verifier_style="txt", secret=FAKE_SECRET,
             _write(history_path, f"# Attempt {i} - your previous attempts at this task\n")
         _write_json(run_root / "history" / f"iter{i:02d}_facts.json", {"iteration": i})
 
+        model = _model_for(model_name, i)
         env = {"ANTHROPIC_BASE_URL": "http://172.17.0.1:8765", "ANTHROPIC_API_KEY": secret}
-        agent = {"name": "claude-code", "model_name": model_name, "env": dict(env)}
+        agent = {"name": "claude-code", "model_name": model, "env": dict(env)}
 
         base_cfg = {
             "job_name": job,
@@ -166,7 +185,7 @@ def build_run_root(root, n_iters=3, verifier_style="txt", secret=FAKE_SECRET,
             "finished_at": f"2026-08-18T1{i}:30:45.123456Z",
             "config": trial_cfg,
             "agent_info": {"name": "claude-code", "version": "2.1.234",
-                           "model_info": {"name": model_name, "provider": "anthropic"}},
+                           "model_info": {"name": model, "provider": "anthropic"}},
             "agent_result": {"cost_usd": 1.0 * i},
             "verifier_result": verifier_result,
             "exception_info": None,
@@ -248,8 +267,155 @@ def test_model_slug_is_derived_not_hardcoded(tmp_path):
     run_root, _, _ = build_run_root(tmp_path, n_iters=1, model_name="Claude Opus 4.5 (preview)")
     manifest = pd.convert(run_root, tmp_path / "delivery")
     out = tmp_path / "delivery" / run_root.name
-    assert manifest["model_slug"] == "claude-opus-4-5-preview"
+    assert manifest["model_slugs"] == ["claude-opus-4-5-preview"]
+    assert manifest["runs"][0]["model_slug"] == "claude-opus-4-5-preview"
+    assert manifest["runs"][0]["model_name"] == "Claude Opus 4.5 (preview)"
     assert (out / "trajectories" / "claude-opus-4-5-preview" / "run_1").is_dir()
+
+
+# --------------------------------------------------------------------------
+# several models in one campaign
+# --------------------------------------------------------------------------
+#
+# A campaign may switch agents mid-way: the real run root has agentic_iter01..04
+# under claude-opus-5 and agentic_iter05 under an OpenAI codex agent. One bundle
+# holds both, one `trajectories/<slug>/` per model, and run numbers restart at 1
+# inside each of them -- so `run_N` no longer names the iteration and the manifest
+# row is the only thing that maps a delivered run back to its source job.
+
+MIXED_MODELS = {1: "claude-opus-5", 2: "claude-opus-5", 3: "claude-opus-5",
+                4: "claude-opus-5", 5: "gpt-5.6-sol"}
+GPT_SLUG = "gpt-5-6-sol"
+
+
+@pytest.fixture
+def multi_model(tmp_path):
+    run_root, _, trial_ids = build_run_root(tmp_path, n_iters=5, model_name=MIXED_MODELS)
+    root = tmp_path / "delivery"
+    manifest = pd.convert(run_root, root)
+    return run_root, trial_ids, root / run_root.name, manifest
+
+
+def test_two_models_get_one_directory_each(multi_model):
+    """Disagreement about the model is grouping, not a refusal."""
+    _, _, out, _ = multi_model
+    traj = out / "trajectories"
+    assert sorted(p.name for p in traj.iterdir()) == ["claude-opus-5", GPT_SLUG]
+    assert sorted(p.name for p in (traj / "claude-opus-5").iterdir()) == [
+        "run_1", "run_2", "run_3", "run_4"]
+    assert sorted(p.name for p in (traj / GPT_SLUG).iterdir()) == ["run_1"]
+
+
+def test_run_numbers_restart_inside_each_model(multi_model):
+    """Numbering is per model, assigned in ledger-iteration order."""
+    _, _, _, manifest = multi_model
+    assert [(r["model_slug"], r["run"], r["source_job"]) for r in manifest["runs"]] == [
+        ("claude-opus-5", "run_1", "agentic_iter01"),
+        ("claude-opus-5", "run_2", "agentic_iter02"),
+        ("claude-opus-5", "run_3", "agentic_iter03"),
+        ("claude-opus-5", "run_4", "agentic_iter04"),
+        (GPT_SLUG, "run_1", "agentic_iter05"),
+    ]
+
+
+def test_manifest_names_every_model_present(multi_model):
+    """`model_slug` described one model; a multi-model bundle needs the whole list."""
+    _, _, out, manifest = multi_model
+    assert "model_slug" not in manifest
+    assert manifest["model_slugs"] == ["claude-opus-5", GPT_SLUG]
+    # self-consistent: exactly the directories on disk, and exactly what the rows say
+    assert manifest["model_slugs"] == sorted(
+        p.name for p in (out / "trajectories").iterdir())
+    assert set(manifest["model_slugs"]) == {r["model_slug"] for r in manifest["runs"]}
+
+
+def test_run_row_traces_a_delivered_run_back_to_its_job(multi_model):
+    """run_N no longer implies agentic_iterNN, so the row must carry the mapping."""
+    _, trial_ids, out, manifest = multi_model
+    rows = {(r["model_slug"], r["run"]): r for r in manifest["runs"]}
+    assert len(rows) == len(manifest["runs"])
+    gpt = rows[(GPT_SLUG, "run_1")]
+    assert gpt["source_job"] == "agentic_iter05"
+    assert gpt["source_trial_dir"].endswith(trial_ids[5])
+    assert gpt["destination"] == f"trajectories/{GPT_SLUG}/run_1"
+    for row in manifest["runs"]:
+        assert row["destination"] == f"trajectories/{row['model_slug']}/{row['run']}"
+        assert (out / row["destination"]).is_dir()
+        assert Path(row["source_trial_dir"]).is_dir()
+        assert row["source_result_sha256"] == hashlib.sha256(
+            (Path(row["source_trial_dir"]) / "result.json").read_bytes()).hexdigest()
+    # one delivered run per source job, no job delivered twice
+    jobs = [r["source_job"] for r in manifest["runs"]]
+    assert sorted(jobs) == sorted(set(jobs))
+
+
+@pytest.mark.parametrize("section", ["renamed", "fallbacks", "headers_added"])
+def test_transform_rows_say_which_model_they_belong_to(multi_model, section):
+    """`run_1` alone is ambiguous once two models each have one."""
+    _, _, _, manifest = multi_model
+    rows = manifest[section]
+    assert rows
+    for row in rows:
+        assert row["model_slug"] in {"claude-opus-5", GPT_SLUG}
+    pairs = {(r["model_slug"], r["run"]) for r in rows}
+    assert ("claude-opus-5", "run_1") in pairs
+    assert (GPT_SLUG, "run_1") in pairs
+
+
+def test_per_model_slugification_is_unchanged(tmp_path):
+    """Each name is slugified exactly as a single-model bundle would slugify it."""
+    run_root, _, _ = build_run_root(
+        tmp_path, n_iters=2,
+        model_name={1: "Claude Opus 4.5 (preview)", 2: "GPT-5.6 Sol"})
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    out = tmp_path / "delivery" / run_root.name
+    assert manifest["model_slugs"] == ["claude-opus-4-5-preview", "gpt-5-6-sol"]
+    assert (out / "trajectories" / "claude-opus-4-5-preview" / "run_1").is_dir()
+    assert (out / "trajectories" / "gpt-5-6-sol" / "run_1").is_dir()
+
+
+def test_each_model_run_carries_its_own_iterations_content(multi_model):
+    """The renumbering must not cross-wire run bodies between models."""
+    _, _, out, _ = multi_model
+    gpt = out / "trajectories" / GPT_SLUG / "run_1"
+    assert "iteration 5" in (gpt / "artifacts" / "optimizer.py").read_text()
+    assert json.loads((gpt / "agent" / "trajectory.json").read_text()) == {"steps": ["iter5"]}
+    # iteration 5 has an injected history; the first iteration of the campaign does not
+    assert (gpt / "agent" / "history.md").is_file()
+    assert not (out / "trajectories" / "claude-opus-5" / "run_1"
+                / "agent" / "history.md").exists()
+    header = (gpt / "verifier" / "test-stdout.md").read_text().split("\n")[0]
+    assert f"  target: trajectories/{GPT_SLUG}/run_1" in header
+    # run_4 of the claude group is iteration 4, not iteration 5
+    assert "iteration 4" in (out / "trajectories" / "claude-opus-5" / "run_4"
+                             / "artifacts" / "optimizer.py").read_text()
+
+
+def test_multi_model_bundle_is_idempotent(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path, n_iters=5, model_name=MIXED_MODELS)
+    root = tmp_path / "delivery"
+    out = convert_bundle(run_root, root)
+    first = tree_checksum(out)
+    files_first = rel_files(out)
+    pd.convert(run_root, root, force=True)
+    assert tree_checksum(out) == first
+    assert rel_files(out) == files_first
+
+
+def test_multi_model_secret_never_reaches_the_output(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path, n_iters=5, model_name=MIXED_MODELS)
+    out = convert_bundle(run_root, tmp_path / "delivery")
+    for path in Path(out).rglob("*"):
+        if path.is_file():
+            assert FAKE_SECRET not in path.read_bytes().decode("utf-8", "replace"), path
+
+
+def test_cli_reports_both_model_directories(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path, n_iters=5, model_name=MIXED_MODELS)
+    r = _cli("--run-root", run_root, "--out", tmp_path / "d", "--dry-run")
+    assert r.returncode == 0, r.stderr
+    assert "trajectories/claude-opus-5/run_4" in r.stdout
+    assert f"trajectories/{GPT_SLUG}/run_1" in r.stdout
 
 
 def test_task_bundle_copied_to_delivery_root(converted):
@@ -694,24 +860,33 @@ def _campaign_is_running(run_root=None):
 def test_real_campaign_converts(tmp_path):
     manifest = pd.convert(REAL_RUN_ROOT, tmp_path / "delivery")
     out = tmp_path / "delivery" / REAL_RUN_ROOT.name
-    assert manifest["model_slug"] == "claude-opus-5"
     # Asserted as invariants, not as a snapshot: the campaign grows by one run
     # every time an iteration is added, and a size-pinned test would fail for
-    # that alone.
+    # that alone. It is also no longer single-model -- iteration 5 was run by a
+    # codex agent -- so the shape asserted is per model.
+    assert manifest["model_slugs"] == sorted(
+        p.name for p in (out / "trajectories").iterdir())
+    assert "claude-opus-5" in manifest["model_slugs"]
     delivered = [r["run"] for r in manifest["runs"]]
-    assert delivered == [f"run_{n}" for n in range(1, len(delivered) + 1)]
     assert len(delivered) >= 3
-    traj = out / "trajectories" / "claude-opus-5"
-    for run in delivered:
+    per_model = collections.defaultdict(list)
+    for row in manifest["runs"]:
+        per_model[row["model_slug"]].append(row["run"])
+    for slug, runs in per_model.items():
+        assert runs == [f"run_{n}" for n in range(1, len(runs) + 1)], slug
+    # the campaign's own iteration order, unbroken and unduplicated across models
+    assert [r["iteration"] for r in manifest["runs"]] == sorted(
+        r["iteration"] for r in manifest["runs"])
+    for row in manifest["runs"]:
         expected = [
             "agent/trajectory.json", "artifacts/optimizer.py", "config.json",
             "result.json", "verifier/grade-stdout.md", "verifier/score.json",
             "verifier/score.md", "verifier/test-stdout.md",
         ]
         # iteration 1 is the only run with no prior history to carry
-        if run != "run_1":
+        if row["iteration"] != 1:
             expected.append("agent/history.md")
-        assert rel_files(traj / run) == sorted(expected)
+        assert rel_files(out / row["destination"]) == sorted(expected), row["destination"]
     # every run's verifier_result speaks `rewards` until harbor is told otherwise
     renames = [r for r in manifest["renamed"] if r["from"] == "verifier_result.rewards"]
     assert len(renames) == len(delivered)
@@ -871,8 +1046,14 @@ def test_iteration_that_submitted_nothing_is_skipped_not_fatal(tmp_path):
     (trial / "artifacts").mkdir()
     manifest = pd.convert(run_root, tmp_path / "delivery")
     out = tmp_path / "delivery" / run_root.name
-    assert [r["run"] for r in manifest["runs"]] == ["run_1", "run_3"]
-    assert not (out / "trajectories" / "claude-opus-5" / "run_2").exists()
+    # Numbering is over DELIVERED runs, so the undeliverable iteration leaves no
+    # gap; the row is what says run_2 came from agentic_iter03.
+    assert [r["run"] for r in manifest["runs"]] == ["run_1", "run_2"]
+    assert [r["source_job"] for r in manifest["runs"]] == ["agentic_iter01", "agentic_iter03"]
+    assert [r["iteration"] for r in manifest["runs"]] == [1, 3]
+    assert not (out / "trajectories" / "claude-opus-5" / "run_3").exists()
+    assert "iteration 3" in (out / "trajectories" / "claude-opus-5" / "run_2"
+                             / "artifacts" / "optimizer.py").read_text()
 
 
 def test_skipped_iteration_is_named_in_the_manifest(tmp_path):

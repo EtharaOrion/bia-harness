@@ -11,7 +11,8 @@ Destination:
     <out>/<task-uuid>/
         task.toml  instruction.md  environment/  solution/  tests/
         manifest.json
-        trajectories/<model-slug>/run_N/
+        trajectories/<model-slug>/run_N/          one <model-slug>/ per model that
+                                                  ran an iteration of the campaign
             agent/{trajectory.json, history.md}
             artifacts/optimizer.py
             config.json  result.json
@@ -34,8 +35,13 @@ rather than applied in silence:
 * Every env var whose name looks like a credential is replaced by `${NAME}`.
   `audit_output` re-walks the finished tree and raises rather than let a literal
   ship; `convert` calls it before it returns.
-* `agentic_iterNN` becomes `run_N`, `agent/` is pruned to the trajectory, and the
-  optimizer is flattened out of `artifacts/workspace/submission/`.
+* Iterations are grouped by the model that ran them and renumbered `run_N` from 1
+  inside each `trajectories/<model-slug>/`, in ledger-iteration order. A campaign
+  that switched agents mid-way therefore delivers several model directories, and
+  `run_N` no longer names its iteration -- each manifest run row carries
+  `iteration`, `source_job` and `source_trial_dir` so the mapping is read rather
+  than guessed. `agent/` is pruned to the trajectory, and the optimizer is
+  flattened out of `artifacts/workspace/submission/`.
 
 `rubric_verdicts.json` is deliberately absent: the LLM judge (runner/agentloop/
 judge.py) is unwired in this harness, so no verdicts exist to convert. It is
@@ -290,19 +296,16 @@ def _newest_trial(job_dir):
     return max(cands)[2]
 
 
-def _model_slug(trials):
-    """The delivery's model directory name, read from the trials, not assumed.
+def _model_slug(name):
+    """One model's directory name under `trajectories/`, read from the trial.
 
-    Two trials of one campaign disagreeing about the model means the run root
-    holds two campaigns, and one `trajectories/<slug>/` would misattribute half
-    of them.
+    A campaign may switch agents mid-way, so trials disagreeing about the model
+    is grouping information rather than an error: each name gets its own
+    directory and no run is misattributed to a model that did not produce it.
     """
-    names = sorted({_model_name(t) for t in trials})
-    if len(names) > 1:
-        raise DeliveryError(f"trials disagree about the model: {names}")
-    slug = re.sub(r"[^a-z0-9]+", "-", names[0].lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
     if not slug:
-        raise DeliveryError(f"model name {names[0]!r} slugifies to nothing")
+        raise DeliveryError(f"model name {name!r} slugifies to nothing")
     return slug
 
 
@@ -336,13 +339,13 @@ def _prune_config(cfg):
     return out
 
 
-def _normalise_result(result, run):
+def _normalise_result(result, ref):
     """Rename `verifier_result.rewards` to `.scores`, and its inner key with it."""
     verifier = result.get("verifier_result")
     if not isinstance(verifier, dict) or "rewards" not in verifier or "scores" in verifier:
         return result, []
 
-    renamed = [{"run": run, "from": "verifier_result.rewards",
+    renamed = [{**ref, "from": "verifier_result.rewards",
                 "to": "verifier_result.scores", "reason": REASON_REWARDS}]
     new = {}
     for key, value in verifier.items():
@@ -351,7 +354,7 @@ def _normalise_result(result, run):
             continue
         if isinstance(value, dict) and "reward" in value and "score" not in value:
             value = {("score" if k == "reward" else k): v for k, v in value.items()}
-            renamed.append({"run": run, "from": "verifier_result.rewards.reward",
+            renamed.append({**ref, "from": "verifier_result.rewards.reward",
                             "to": "verifier_result.scores.score",
                             "reason": REASON_REWARD_KEY})
         new["scores"] = value
@@ -361,7 +364,7 @@ def _normalise_result(result, run):
     return out, renamed
 
 
-def _plan_verifier(trial, run, dest, files, renamed, fallbacks, headers, finished_at):
+def _plan_verifier(trial, ref, dest, files, renamed, fallbacks, headers, finished_at):
     """The four delivered verifier files, preferring the new names.
 
     Every fallback is recorded; a source that exists but is empty is refused,
@@ -377,18 +380,18 @@ def _plan_verifier(trial, run, dest, files, renamed, fallbacks, headers, finishe
         score_src = vdir / "reward.json"
         if not score_src.is_file():
             raise DeliveryError(
-                f"{run}: {vdir} has neither score.json nor reward.json; the "
+                f"{dest}: {vdir} has neither score.json nor reward.json; the "
                 f"trial was never graded")
         obj = _read_json(score_src)
         if "reward" in obj and "score" not in obj:
             obj = {("score" if k == "reward" else k): v for k, v in obj.items()}
-            renamed.append({"run": run, "from": "verifier/score.json:reward",
+            renamed.append({**ref, "from": "verifier/score.json:reward",
                             "to": "verifier/score.json:score",
                             "reason": REASON_SCORE_JSON})
         score_bytes = (json.dumps(obj, indent=1) + "\n").encode()
-        fallbacks.append({"run": run, "destination": "verifier/score.json",
+        fallbacks.append({**ref, "destination": "verifier/score.json",
                           "source": str(score_src), "synthesised": False})
-    _require_content(score_bytes, run, "verifier/score.json", score_src)
+    _require_content(score_bytes, dest, "verifier/score.json", score_src)
     files[f"{dest}/verifier/score.json"] = score_bytes
 
     md_src = vdir / "score.md"
@@ -398,12 +401,12 @@ def _plan_verifier(trial, run, dest, files, renamed, fallbacks, headers, finishe
         score = json.loads(score_bytes.decode()).get("score")
         if score is None:
             raise DeliveryError(
-                f"{run}: no verifier/score.md and score.json carries no `score` "
+                f"{dest}: no verifier/score.md and score.json carries no `score` "
                 f"to synthesise one from")
         md_bytes = f"{score}\n".encode()
-        fallbacks.append({"run": run, "destination": "verifier/score.md",
+        fallbacks.append({**ref, "destination": "verifier/score.md",
                           "source": str(score_src), "synthesised": True})
-    _require_content(md_bytes, run, "verifier/score.md", md_src)
+    _require_content(md_bytes, dest, "verifier/score.md", md_src)
     files[f"{dest}/verifier/score.md"] = md_bytes
 
     for stem in ("grade-stdout", "test-stdout"):
@@ -412,16 +415,16 @@ def _plan_verifier(trial, run, dest, files, renamed, fallbacks, headers, finishe
             src = vdir / f"{stem}.txt"
             if not src.is_file():
                 raise DeliveryError(
-                    f"{run}: {vdir} has neither {stem}.md nor {stem}.txt")
-            fallbacks.append({"run": run, "destination": f"verifier/{stem}.md",
+                    f"{dest}: {vdir} has neither {stem}.md nor {stem}.txt")
+            fallbacks.append({**ref, "destination": f"verifier/{stem}.md",
                               "source": str(src), "synthesised": False})
         data = src.read_bytes()
-        _require_content(data, run, f"verifier/{stem}.md", src)
+        _require_content(data, dest, f"verifier/{stem}.md", src)
         if stem == "test-stdout":
             header = _test_stdout_header(dest, data, finished_at)
             if header is not None:
                 data = header + data
-                headers.append({"run": run,
+                headers.append({**ref,
                                 "destination": f"verifier/{stem}.md",
                                 "timestamp_source": "result.json:finished_at",
                                 "timestamp": finished_at})
@@ -475,21 +478,21 @@ def _test_stdout_header(dest, data, finished_at):
             f"# {provenance}\n\n").encode()
 
 
-def _require_content(data, run, destination, source):
+def _require_content(data, dest, destination, source):
     if not data.strip():
         raise DeliveryError(
-            f"{run}: {destination} would be empty; its source {source} holds no "
+            f"{dest}: {destination} would be empty; its source {source} holds no "
             f"content and an empty verifier file must never be delivered")
 
 
-def _plan_run(trial, run, dest, files, renamed, redacted, fallbacks, headers):
+def _plan_run(trial, ref, dest, files, renamed, redacted, fallbacks, headers):
     cfg = _read_json(trial / "config.json")
     result = _read_json(trial / "result.json")
 
     trajectory = trial / "agent" / "trajectory.json"
     if not trajectory.is_file():
         raise DeliveryError(
-            f"{run}: {trajectory} is missing; harbor writes it at trial end, so "
+            f"{dest}: {trajectory} is missing; harbor writes it at trial end, so "
             f"the trial did not complete")
     files[f"{dest}/agent/trajectory.json"] = trajectory.read_bytes()
 
@@ -499,7 +502,7 @@ def _plan_run(trial, run, dest, files, renamed, redacted, fallbacks, headers):
         path = Path(injected)
         if not path.is_file():
             raise DeliveryError(
-                f"{run}: config.json injects {path}, which no longer exists")
+                f"{dest}: config.json injects {path}, which no longer exists")
         files[f"{dest}/agent/history.md"] = path.read_bytes()
 
     optimizer = _find_optimizer(trial)
@@ -509,13 +512,13 @@ def _plan_run(trial, run, dest, files, renamed, redacted, fallbacks, headers):
     redacted.extend(records)
     files[f"{dest}/config.json"] = _json_bytes(cfg_out)
 
-    result_out, renames = _normalise_result(result, run)
+    result_out, renames = _normalise_result(result, ref)
     renamed.extend(renames)
     result_out, records = redact_secrets(result_out, f"{dest}/result.json")
     redacted.extend(records)
     files[f"{dest}/result.json"] = _json_bytes(result_out)
 
-    _plan_verifier(trial, run, dest, files, renamed, fallbacks, headers,
+    _plan_verifier(trial, ref, dest, files, renamed, fallbacks, headers,
                    _iso8601z(result.get("finished_at")))
 
 
@@ -653,16 +656,25 @@ def convert(run_root, out, force=False, dry_run=False):
 
     trials = [t for _, _, t in sources]
     forbidden = _collect_secret_values(run_root, trials)
-    model_slug = _model_slug(trials)
 
     files = {}
     runs, renamed, redacted, fallbacks, headers = [], [], [], [], []
+    # Run numbers restart at 1 inside each model directory, in ledger-iteration
+    # order, so `run_N` no longer names the iteration that produced it; the
+    # manifest row below carries that mapping instead of leaving it to be guessed.
+    delivered_per_model = {}
     for number, job_dir, trial in sources:
-        run = f"run_{number}"
-        dest = f"trajectories/{model_slug}/{run}"
-        _plan_run(trial, run, dest, files, renamed, redacted, fallbacks, headers)
+        model_name = _model_name(trial)
+        slug = _model_slug(model_name)
+        delivered_per_model[slug] = delivered_per_model.get(slug, 0) + 1
+        run = f"run_{delivered_per_model[slug]}"
+        dest = f"trajectories/{slug}/{run}"
+        ref = {"model_slug": slug, "run": run}
+        _plan_run(trial, ref, dest, files, renamed, redacted, fallbacks, headers)
         runs.append({
-            "run": run,
+            **ref,
+            "model_name": model_name,
+            "iteration": number,
             "source_job": job_dir.name,
             "source_trial_dir": str(trial),
             "source_result_sha256": hashlib.sha256(
@@ -677,7 +689,7 @@ def convert(run_root, out, force=False, dry_run=False):
         "generated_at": _utc_now(),
         "source_run_root": str(run_root),
         "task_uuid": run_root.name,
-        "model_slug": model_slug,
+        "model_slugs": sorted(delivered_per_model),
         "runs": runs,
         "renamed": renamed,
         "redacted": redacted,
@@ -708,16 +720,18 @@ def convert(run_root, out, force=False, dry_run=False):
 # --------------------------------------------------------------------------
 
 def _report(manifest, dry_run):
-    print(f"{manifest['task_uuid']}/trajectories/{manifest['model_slug']}/"
-          f" ({len(manifest['runs'])} runs)"
+    print(f"{manifest['task_uuid']}/trajectories/"
+          f" ({len(manifest['runs'])} runs across "
+          f"{len(manifest['model_slugs'])} model(s): "
+          f"{', '.join(manifest['model_slugs'])})"
           + ("  [dry run, nothing written]" if dry_run else ""))
     by_run = {}
     for row in manifest["fallbacks"]:
-        by_run.setdefault(row["run"], []).append(row)
+        by_run.setdefault((row["model_slug"], row["run"]), []).append(row)
     for row in manifest["runs"]:
         print(f"  {row['run']}  {row['source_job']}  "
               f"{Path(row['source_trial_dir']).name} -> {row['destination']}")
-        for fb in by_run.get(row["run"], []):
+        for fb in by_run.get((row["model_slug"], row["run"]), []):
             how = "synthesised from" if fb["synthesised"] else "fell back to"
             print(f"    {fb['destination']}  {how}  {Path(fb['source']).name}")
     print(f"  redacted {len(manifest['redacted'])} secret fields, "

@@ -46,15 +46,22 @@ __all__ = [
 HARBOR_PKG_PATH = "/home/bia-gpu/oer/.venv-harbor/lib/python3.13/site-packages"
 
 
-# Which (base_url, api_key) env pair each harbor agent actually reads. Both point
-# at the SAME Claude OAuth bridge; only the variable names differ.
+# Which (base_url, api_key) env pair each harbor agent actually reads. The first
+# two point at the SAME Claude OAuth bridge; only the variable names differ.
 #   claude-code   -> harbor/agents/installed/claude_code.py reads ANTHROPIC_*.
 #   openhands-sdk -> harbor/agents/installed/openhands_sdk.py reads LLM_* and
 #                    RAISES ValueError when LLM_API_KEY is unset, so the key must
 #                    be present even though the bridge ignores its value.
+#   codex         -> harbor/agents/installed/codex.py is
+#                    ModelConnectionSpec(default_provider="openai"), so harbor's
+#                    PROVIDERS["openai"] reads OPENAI_*. Its run() writes the key
+#                    into $CODEX_HOME/auth.json unconditionally -- same posture as
+#                    openhands-sdk, emit it even when the bridge ignores it -- and
+#                    it needs its OWN OpenAI-compatible bridge, on port 8788.
 AGENT_ENV_KEYS: dict[str, tuple[str, str]] = {
     "claude-code": ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
     "openhands-sdk": ("LLM_BASE_URL", "LLM_API_KEY"),
+    "codex": ("OPENAI_BASE_URL", "OPENAI_API_KEY"),
 }
 
 # LiteLLM (which openhands-sdk drives) routes by provider prefix, and `anthropic/`

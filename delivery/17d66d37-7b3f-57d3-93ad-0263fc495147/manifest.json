@@ -1,102 +1,152 @@
 {
     "converter_version": "1.0.0",
-    "generated_at": "2026-08-18T15:24:45Z",
+    "generated_at": "2026-08-20T11:07:46Z",
     "source_run_root": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147",
     "task_uuid": "17d66d37-7b3f-57d3-93ad-0263fc495147",
-    "model_slug": "claude-opus-5",
+    "model_slugs": [
+        "claude-opus-5",
+        "gpt-5-6-sol"
+    ],
     "runs": [
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
+            "model_name": "claude-opus-5",
+            "iteration": 1,
             "source_job": "agentic_iter01",
             "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF",
             "source_result_sha256": "570157d8f2eb94fe114c5171de73018cd1a33b98fc47538733e6ab9c43e3ecb2",
             "destination": "trajectories/claude-opus-5/run_1"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
+            "model_name": "claude-opus-5",
+            "iteration": 2,
             "source_job": "agentic_iter02",
             "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi",
             "source_result_sha256": "494e6ff479396592a851f771623433a37be8acec6208f58d982dc7a915c41bb9",
             "destination": "trajectories/claude-opus-5/run_2"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
+            "model_name": "claude-opus-5",
+            "iteration": 3,
             "source_job": "agentic_iter03",
             "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P",
             "source_result_sha256": "ab949dbb223eac460f259e7cf8fb1586de0208d56dddf277df289ebd94072a95",
             "destination": "trajectories/claude-opus-5/run_3"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_4",
+            "model_name": "claude-opus-5",
+            "iteration": 4,
             "source_job": "agentic_iter04",
             "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter04/minicalc__LYfztqU",
             "source_result_sha256": "bbb69bedf9dd7428aab46745d3ea1bfe2653d836993d27aad03feec198f8af8c",
             "destination": "trajectories/claude-opus-5/run_4"
+        },
+        {
+            "model_slug": "gpt-5-6-sol",
+            "run": "run_1",
+            "model_name": "gpt-5.6-sol",
+            "iteration": 5,
+            "source_job": "agentic_iter05",
+            "source_trial_dir": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter05/minicalc__H96niWC",
+            "source_result_sha256": "9389e3b588ee627346d35978997138c2fbf45f210f8b7e089a9aca1106f97a66",
+            "destination": "trajectories/gpt-5-6-sol/run_1"
         }
     ],
     "renamed": [
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "from": "verifier_result.rewards",
             "to": "verifier_result.scores",
             "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "from": "verifier_result.rewards.reward",
             "to": "verifier_result.scores.score",
             "reason": "the delivery format calls the graded value `score`, not `reward`"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "from": "verifier/score.json:reward",
             "to": "verifier/score.json:score",
             "reason": "synthesised from the pre-rewiring verifier/reward.json, whose graded value is keyed `reward`"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "from": "verifier_result.rewards",
             "to": "verifier_result.scores",
             "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "from": "verifier_result.rewards.reward",
             "to": "verifier_result.scores.score",
             "reason": "the delivery format calls the graded value `score`, not `reward`"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "from": "verifier/score.json:reward",
             "to": "verifier/score.json:score",
             "reason": "synthesised from the pre-rewiring verifier/reward.json, whose graded value is keyed `reward`"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "from": "verifier_result.rewards",
             "to": "verifier_result.scores",
             "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "from": "verifier_result.rewards.reward",
             "to": "verifier_result.scores.score",
             "reason": "the delivery format calls the graded value `score`, not `reward`"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "from": "verifier/score.json:reward",
             "to": "verifier/score.json:score",
             "reason": "synthesised from the pre-rewiring verifier/reward.json, whose graded value is keyed `reward`"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_4",
             "from": "verifier_result.rewards",
             "to": "verifier_result.scores",
             "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_4",
+            "from": "verifier_result.rewards.reward",
+            "to": "verifier_result.scores.score",
+            "reason": "the delivery format calls the graded value `score`, not `reward`"
+        },
+        {
+            "model_slug": "gpt-5-6-sol",
+            "run": "run_1",
+            "from": "verifier_result.rewards",
+            "to": "verifier_result.scores",
+            "reason": "harbor names the verifier result key after the reward file the task's test.sh wrote; the delivery format names it after the score"
+        },
+        {
+            "model_slug": "gpt-5-6-sol",
+            "run": "run_1",
             "from": "verifier_result.rewards.reward",
             "to": "verifier_result.scores.score",
             "reason": "the delivery format calls the graded value `score`, not `reward`"
@@ -150,76 +200,100 @@
             "file": "trajectories/claude-opus-5/run_4/result.json",
             "json_path": "config.agent.env.ANTHROPIC_API_KEY",
             "placeholder": "${ANTHROPIC_API_KEY}"
+        },
+        {
+            "env_var": "OPENAI_API_KEY",
+            "file": "trajectories/gpt-5-6-sol/run_1/config.json",
+            "json_path": "agent.env.OPENAI_API_KEY",
+            "placeholder": "${OPENAI_API_KEY}"
+        },
+        {
+            "env_var": "OPENAI_API_KEY",
+            "file": "trajectories/gpt-5-6-sol/run_1/result.json",
+            "json_path": "config.agent.env.OPENAI_API_KEY",
+            "placeholder": "${OPENAI_API_KEY}"
         }
     ],
     "fallbacks": [
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "destination": "verifier/score.json",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/reward.json",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "destination": "verifier/score.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/reward.json",
             "synthesised": true
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "destination": "verifier/grade-stdout.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/grade-stdout.txt",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "destination": "verifier/test-stdout.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter01/minicalc__raEbUZF/verifier/test-stdout.txt",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "destination": "verifier/score.json",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/reward.json",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "destination": "verifier/score.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/reward.json",
             "synthesised": true
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "destination": "verifier/grade-stdout.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/grade-stdout.txt",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "destination": "verifier/test-stdout.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter02/minicalc__HgPZTBi/verifier/test-stdout.txt",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "destination": "verifier/score.json",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/reward.json",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "destination": "verifier/score.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/reward.json",
             "synthesised": true
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "destination": "verifier/grade-stdout.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/grade-stdout.txt",
             "synthesised": false
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "destination": "verifier/test-stdout.md",
             "source": "runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter03/minicalc__hhEQG3P/verifier/test-stdout.txt",
@@ -228,28 +302,39 @@
     ],
     "headers_added": [
         {
+            "model_slug": "claude-opus-5",
             "run": "run_1",
             "destination": "verifier/test-stdout.md",
             "timestamp_source": "result.json:finished_at",
             "timestamp": "2026-08-18T11:19:51Z"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_2",
             "destination": "verifier/test-stdout.md",
             "timestamp_source": "result.json:finished_at",
             "timestamp": "2026-08-18T11:24:34Z"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_3",
             "destination": "verifier/test-stdout.md",
             "timestamp_source": "result.json:finished_at",
             "timestamp": "2026-08-18T11:32:34Z"
         },
         {
+            "model_slug": "claude-opus-5",
             "run": "run_4",
             "destination": "verifier/test-stdout.md",
             "timestamp_source": "result.json:finished_at",
             "timestamp": "2026-08-18T13:53:15Z"
+        },
+        {
+            "model_slug": "gpt-5-6-sol",
+            "run": "run_1",
+            "destination": "verifier/test-stdout.md",
+            "timestamp_source": "result.json:finished_at",
+            "timestamp": "2026-08-20T10:38:06Z"
         }
     ],
     "dropped": [

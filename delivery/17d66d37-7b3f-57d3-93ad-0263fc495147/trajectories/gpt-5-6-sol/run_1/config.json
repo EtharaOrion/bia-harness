@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "/home/bia-gpu/oer/bia/harness/tasks/minicalc"
+    },
+    "trial_name": "minicalc__H96niWC",
+    "trials_dir": "/home/bia-gpu/oer/bia/harness/runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/jobs/agentic_iter05",
+    "agent_setup_timeout_multiplier": 5.0,
+    "agent": {
+        "name": "codex",
+        "model_name": "gpt-5.6-sol",
+        "env": {
+            "OPENAI_BASE_URL": "http://172.17.0.1:8788",
+            "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+        }
+    },
+    "extra_instruction_paths": [
+        "/home/bia-gpu/oer/bia/harness/runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/history/iter05_history.md"
+    ],
+    "job_id": "ff2374e9-9da0-40a0-acc4-f67159ba7bf4"
+}

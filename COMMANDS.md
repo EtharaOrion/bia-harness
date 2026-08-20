@@ -170,26 +170,27 @@ harbor --version              # verify CLI in PATH
 
 ## Verify the harness
 
-`pyproject.toml` sets `testpaths = ["tests"]`, so a bare `pytest` runs the new
-pipeline only. The legacy planner substrate under `legacy/harness2/tests` still
-passes but is excluded on purpose — it guards a path `agentloop` does not use, so
-cover it with an explicit path argument when you touch `legacy/harness2/`.
+`pyproject.toml` sets `testpaths = ["tests", "legacy/harness2/tests"]`, so the suite
+command is a **bare `pytest`** with no path argument. Passing a path overrides
+`testpaths` and silently collects only half the suite.
 
 ```bash
-# the new pipeline (agentloop + the shared harness) — this is the suite
+# the whole suite, both trees
 pytest
 
-# the legacy planner substrate, opt-in
+# the new pipeline only (agentloop + the shared harness) — fully green
+pytest tests/
+
+# the legacy planner substrate only
 pytest legacy/harness2/tests
 ```
 
-At the time of writing both are green: `pytest` gives `557 passed, 2 skipped`;
-`pytest legacy/harness2/tests` gives `207 passed, 11 skipped`. Nothing fails in
-either tree.
-
-This pytest config sets `addopts = "-q"` and prints no final counts line. To read
-exact numbers, use `pytest --junitxml=/tmp/r.xml` and inspect the `testsuite`
-attributes.
+At the time of writing: `pytest` gives `3 failed, 761 passed, 13 skipped`;
+`pytest tests/` gives `557 passed, 2 skipped`; `pytest legacy/harness2/tests` gives
+`3 failed, 204 passed, 11 skipped`. The three failures are all
+`legacy/harness2/tests/test_task_toml.py::test_task_toml_parses`, against the two
+`bia/track3nov` bundles and `minicalc`, which declare `schema_version = "1.4"` where that
+test asserts `version = "1.0"`. They are pre-existing and unrelated to the pipeline.
 
 The suite covers task grading, dry-run orchestration, ledger ingestion, mount
 validation, task schemas, LLM client behavior, RFP/CLI alignment, and the whole

@@ -1,0 +1,11 @@
+{
+ "composite": 1.0,
+ "graded_score": 1.0,
+ "graded_step": 2438,
+ "loss_at_graded_step": 3.052796,
+ "loss_per_seed_seed0": 2.836496,
+ "loss_per_seed_seed1": 3.269097,
+ "loss_steps": 2438,
+ "reason_code": 0,
+ "score": 1.0
+}

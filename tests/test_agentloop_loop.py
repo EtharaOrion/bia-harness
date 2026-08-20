@@ -1636,3 +1636,108 @@ def test_main_rejects_an_unknown_agent(monkeypatch, task_dir, tmp_path):
     with pytest.raises(SystemExit) as exc:
         main(["--task", str(task_dir), "--iterations", "1", "--agent", "bogus"])
     assert exc.value.code != 0
+
+
+# --------------------------------------------------------------------------- #
+# codex -- a third agent, on its own OpenAI-compatible bridge
+# --------------------------------------------------------------------------- #
+
+CODEX_BRIDGE = "http://172.17.0.1:8788"
+
+
+def test_refine_threads_model_and_bridge_url_into_the_config(
+    monkeypatch, task_dir, tmp_path
+):
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    refine(task_dir, iterations=1, harbor_bin="/nonexistent/harbor",
+           agent_name="codex", model_name="gpt-5-codex",
+           bridge_url=CODEX_BRIDGE)
+
+    assert seen["agent_name"] == "codex"
+    assert seen["model_name"] == "gpt-5-codex"
+    assert seen["bridge_url"] == CODEX_BRIDGE
+    cfg = json.loads((tmp_path / ".cfg_iter01.json").read_text())
+    agent = cfg["agents"][0]
+    assert agent["name"] == "codex"
+    assert agent["model_name"] == "gpt-5-codex"
+    assert agent["env"]["OPENAI_BASE_URL"] == CODEX_BRIDGE
+    assert agent["env"]["OPENAI_API_KEY"]
+    assert "ANTHROPIC" not in json.dumps(cfg)
+
+
+def test_refine_omits_model_and_bridge_url_when_they_are_none(
+    monkeypatch, task_dir, tmp_path
+):
+    """Unset must mean "do not pass", not "pass None". Forwarding None would
+    override build_base_cfg's own defaults with a null and break every existing
+    caller that relies on them."""
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    refine(task_dir, iterations=1, harbor_bin="/nonexistent/harbor")
+
+    assert "model_name" not in seen
+    assert "bridge_url" not in seen
+    cfg = json.loads((tmp_path / ".cfg_iter01.json").read_text())
+    assert cfg["agents"][0]["model_name"] == "claude-opus-5"
+    assert cfg["agents"][0]["env"]["ANTHROPIC_BASE_URL"] == "http://172.17.0.1:8765"
+
+
+def test_refine_accepts_one_override_without_the_other(
+    monkeypatch, task_dir, tmp_path
+):
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    refine(task_dir, iterations=1, harbor_bin="/nonexistent/harbor",
+           model_name="claude-sonnet-4")
+
+    assert seen["model_name"] == "claude-sonnet-4"
+    assert "bridge_url" not in seen
+    cfg = json.loads((tmp_path / ".cfg_iter01.json").read_text())
+    assert cfg["agents"][0]["env"]["ANTHROPIC_BASE_URL"] == "http://172.17.0.1:8765"
+
+
+def test_main_accepts_the_codex_agent(monkeypatch, task_dir, tmp_path):
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    rc = main(["--task", str(task_dir), "--iterations", "1",
+               "--agent", "codex", "--model", "gpt-5-codex",
+               "--bridge-url", CODEX_BRIDGE,
+               "--harbor-bin", "/nonexistent/harbor"])
+
+    assert rc == 0
+    assert seen["agent_name"] == "codex"
+    assert seen["model_name"] == "gpt-5-codex"
+    assert seen["bridge_url"] == CODEX_BRIDGE
+
+
+def test_main_model_and_bridge_url_default_to_unset(monkeypatch, task_dir, tmp_path):
+    seen = _record_agent(monkeypatch, tmp_path)
+
+    main(["--task", str(task_dir), "--iterations", "1",
+          "--harbor-bin", "/nonexistent/harbor"])
+
+    assert "model_name" not in seen
+    assert "bridge_url" not in seen
+
+
+def test_model_and_bridge_url_help_state_the_unset_behaviour_and_both_ports():
+    """An invisible default is a trap, and picking the wrong port silently sends
+    codex at the Claude bridge -- so both must be named in --help."""
+    from agentloop import loop
+
+    help_text = loop.build_parser().format_help()
+    for flag in ("--model", "--bridge-url"):
+        assert flag in help_text
+        blurb = help_text[help_text.rindex(flag):][:400].lower()
+        assert "default" in blurb
+    assert "8765" in help_text
+    assert "8788" in help_text
+
+
+def test_agent_help_lists_codex():
+    from agentloop import loop
+
+    help_text = loop.build_parser().format_help()
+    idx = help_text.rindex("--agent")
+    assert "codex" in help_text[idx:idx + 400]

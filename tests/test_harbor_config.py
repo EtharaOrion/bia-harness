@@ -236,7 +236,7 @@ def test_agent_env_rejects_an_unknown_agent_and_names_the_supported_ones():
         agent_env("bogus", BRIDGE)
     msg = str(exc.value)
     assert "bogus" in msg
-    assert "claude-code" in msg and "openhands-sdk" in msg
+    assert "claude-code" in msg and "openhands-sdk" in msg and "codex" in msg
 
 
 def test_agent_env_honours_an_explicit_api_key():
@@ -310,3 +310,140 @@ def test_setup_timeout_multiplier_defaults_to_five_and_is_tunable(task_dir, run_
                          setup_timeout_multiplier=12.0)
     assert cfg["agent_setup_timeout_multiplier"] == 12.0
     validate_cfg(cfg)
+
+
+# --------------------------------------------------------------------------- #
+# codex -- a THIRD agent, pointed at the local OpenAI-compatible bridge
+# --------------------------------------------------------------------------- #
+
+CODEX_BRIDGE = "http://172.17.0.1:8788"
+
+
+@pytest.fixture
+def codex_cfg(task_dir, run_root):
+    return build_base_cfg(task_dir, run_root, agent_name="codex",
+                          model_name="gpt-5-codex", bridge_url=CODEX_BRIDGE)
+
+
+def test_agent_env_for_codex_is_exactly_the_openai_pair():
+    """harbor/agents/installed/codex.py declares
+    `MODEL_CONNECTION = ModelConnectionSpec(default_provider="openai")`, and
+    harbor's PROVIDERS["openai"] resolves the endpoint from OPENAI_BASE_URL and
+    the credential from OPENAI_API_KEY. Nothing else in the env reaches codex."""
+    assert agent_env("codex", CODEX_BRIDGE) == {
+        "OPENAI_BASE_URL": CODEX_BRIDGE,
+        "OPENAI_API_KEY": "oauth-placeholder",
+    }
+
+
+def test_codex_api_key_is_always_emitted_even_though_the_bridge_ignores_it():
+    """Same defensive posture as openhands-sdk: codex's run() writes
+    `{"OPENAI_API_KEY": "..."}` into $CODEX_HOME/auth.json unconditionally, so an
+    absent key is a broken auth file rather than a skipped one."""
+    env = agent_env("codex", CODEX_BRIDGE)
+    assert env["OPENAI_API_KEY"]
+    assert agent_env("codex", CODEX_BRIDGE, api_key="sk-real")["OPENAI_API_KEY"] == "sk-real"
+
+
+def test_codex_cfg_selects_the_codex_agent(codex_cfg):
+    assert codex_cfg["agents"][0]["name"] == "codex"
+
+
+def test_codex_is_a_real_harbor_agent_name():
+    """Guard against a typo'd slug: harbor matches agents by this exact string."""
+    from harbor.models.agent.name import AgentName
+
+    assert AgentName.CODEX.value == "codex"
+    assert "codex" in {a.value for a in AgentName}
+
+
+def test_codex_cfg_carries_the_openai_env_at_port_8788(codex_cfg):
+    env = codex_cfg["agents"][0]["env"]
+    assert env == {
+        "OPENAI_BASE_URL": CODEX_BRIDGE,
+        "OPENAI_API_KEY": "oauth-placeholder",
+    }
+    # 172.17.0.1 is the docker gateway: the container reaches the HOST bridge
+    # through it, which is why this is not 127.0.0.1.
+    assert "172.17.0.1:8788" in env["OPENAI_BASE_URL"]
+    assert "127.0.0.1" not in env["OPENAI_BASE_URL"]
+
+
+def test_codex_cfg_carries_no_other_providers_env(codex_cfg):
+    """A stray ANTHROPIC_*/LLM_* pair would read as if the bridge were wired
+    twice, and would point codex at an endpoint it never reads."""
+    blob = json.dumps(codex_cfg)
+    assert "ANTHROPIC" not in blob
+    assert "LLM_BASE_URL" not in blob and "LLM_API_KEY" not in blob
+
+
+def test_codex_model_name_stays_bare(task_dir, run_root):
+    """THE pin. The Codex CLI takes a plain model name and our bridge is
+    OpenAI-compatible, so LiteLLM's `anthropic/` prefix would be actively wrong
+    here. Codex behaves like claude-code, NOT like openhands-sdk. If a future
+    reader "harmonizes" the three agents onto one prefix rule, this fails."""
+    cfg = build_base_cfg(task_dir, run_root, agent_name="codex",
+                         model_name="gpt-5-codex", bridge_url=CODEX_BRIDGE)
+    assert cfg["agents"][0]["model_name"] == "gpt-5-codex"
+    assert not cfg["agents"][0]["model_name"].startswith("anthropic/")
+    assert "anthropic/" not in json.dumps(cfg)
+
+
+def test_codex_is_not_in_the_prefixed_model_agents_set():
+    """Pinned at the source, not only through its effect: openhands-sdk is the
+    ONLY agent that routes through LiteLLM and therefore needs the prefix."""
+    from agentloop.harbor_config import _PREFIXED_MODEL_AGENTS
+
+    assert "codex" not in _PREFIXED_MODEL_AGENTS
+    assert _PREFIXED_MODEL_AGENTS == frozenset({"openhands-sdk"})
+
+
+def test_codex_model_name_passes_through_agent_model_name_unmodified():
+    """Directly against the helper, for every shape of name codex might be given."""
+    from agentloop.harbor_config import _agent_model_name
+
+    for name in ("gpt-5-codex", "gpt-5.1", "o4-mini", "openai/gpt-5-codex"):
+        assert _agent_model_name("codex", name) == name
+
+
+def test_codex_cfg_passes_the_real_harbor_schema(codex_cfg):
+    """Serialized exactly as it will be written to disk."""
+    validate_cfg(json.loads(json.dumps(codex_cfg)))
+
+
+def test_all_three_agents_are_declared_and_distinct():
+    from agentloop.harbor_config import AGENT_ENV_KEYS
+
+    assert set(AGENT_ENV_KEYS) == {"claude-code", "openhands-sdk", "codex"}
+    assert AGENT_ENV_KEYS["codex"] == ("OPENAI_BASE_URL", "OPENAI_API_KEY")
+    # No two agents may share an env pair; that would make the config ambiguous.
+    assert len({v for v in AGENT_ENV_KEYS.values()}) == 3
+
+
+def test_adding_codex_did_not_move_the_claude_or_openhands_defaults(
+    cfg, openhands_cfg
+):
+    """The existing paths must be byte-identical to what they were before codex."""
+    assert cfg["agents"][0] == {
+        "name": "claude-code",
+        "model_name": "claude-opus-5",
+        "env": {
+            "ANTHROPIC_BASE_URL": BRIDGE,
+            "ANTHROPIC_API_KEY": "oauth-placeholder",
+        },
+    }
+    assert openhands_cfg["agents"][0] == {
+        "name": "openhands-sdk",
+        "model_name": "anthropic/claude-opus-5",
+        "env": {"LLM_BASE_URL": BRIDGE, "LLM_API_KEY": "oauth-placeholder"},
+    }
+
+
+def test_codex_defaults_are_not_special_cased(task_dir, run_root):
+    """`build_base_cfg`'s defaults stay Claude-flavoured for every agent: asking
+    for codex without a model/bridge yields the DEFAULTS, not a hidden override.
+    Callers pick the codex bridge explicitly, which is what makes the wiring
+    visible in the written .cfg_iterNN.json."""
+    cfg = build_base_cfg(task_dir, run_root, agent_name="codex")
+    assert cfg["agents"][0]["model_name"] == "claude-opus-5"
+    assert cfg["agents"][0]["env"]["OPENAI_BASE_URL"] == BRIDGE
