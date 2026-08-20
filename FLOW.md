@@ -133,7 +133,9 @@ container, and our code drives everything around it.
 
 ```bash
 python runner/agentloop/loop.py --task <name|uuid|path> --iterations N \
-  [--start-at N] [--summarise] [--judge] [--harbor-bin PATH]
+  [--start-at N] [--agent claude-code|openhands-sdk] \
+  [--summarise] [--judge] [--harbor-bin PATH] \
+  [--timeout SECONDS] [--keep-jobs N]
 ```
 
 Per-task layout under `runs/agentloop/<slug>/`:
@@ -145,6 +147,7 @@ Per-task layout under `runs/agentloop/<slug>/`:
 | `history/iterNN_facts.json` | measured facts, written before LLM enrichment |
 | `.cfg_iterNN.json` | the exact config handed to `harbor run` |
 | `jobs/<job_name>/<trial>/` | harbor's own trial output |
+| `.lock` | `flock` held for the whole campaign; a second run raises `RunRootBusy` |
 
 `<slug>` is the task uuid, or a slug of `[task].name` when the bundle declares none.
 
@@ -152,6 +155,12 @@ Per-task layout under `runs/agentloop/<slug>/`:
 written the moment it exists, so an interrupted campaign resumes rather than restarts —
 re-running the same command continues at the next iteration. A truncated final line
 (the normal shape of a kill mid-write) is skipped, not fatal.
+
+**One campaign per task at a time.** `refine()` takes a non-blocking `flock` on
+`<run_root>/.lock` for its whole duration; a second run against the same task raises
+`RunRootBusy` instead of interleaving iterations into one ledger. There is no `--force`:
+the kernel releases the lock when the holder dies for any reason, so a held lock always
+means a live campaign, never a stale file.
 
 **`--export-traces` is a CLI flag by necessity.** `JobConfig` is pydantic
 `extra="ignore"`, so harbor silently DROPS keys it does not define. An `export_traces`

@@ -64,8 +64,15 @@ Opt-in integration test (launches a real container, ~20s):
 TRACK3_INTEGRATION=1 pytest tests/test_agentloop_integration.py -v
 ```
 
-Caveat: this loop has only ever been driven with harbor's `nop` agent. It has never
-been run with a real LLM agent end to end.
+Proven end to end on `tasks/minicalc`: 4 iterations with the real `claude-code` agent,
+all `graded_pass` on 2 seeds, `graded_step` 2665 → 2663 → 2653 → 2653, $5.20 total,
+packaged to `delivery/17d66d37-7b3f-57d3-93ad-0263fc495147/`. Use minicalc (~1 s of
+training, ~$1.30 per iteration) to exercise a change before spending a `bia/track3nov`
+iteration (~2.2 h, ~$9).
+
+```bash
+python runner/agentloop/loop.py --task minicalc --iterations 3 --timeout 1800
+```
 
 ## Package a delivery bundle
 

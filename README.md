@@ -71,6 +71,12 @@ under `tasks/`.
 ├── runs/                                run artifacts (gitignored)
 │   ├── agentloop/<slug>/                agentloop campaigns
 │   └── <task-slug>/runs.jsonl           the legacy path's per-task append-only ledger
+├── tools/
+│   ├── package_delivery.py              one agentloop campaign -> a client delivery bundle
+│   └── flow_check.py                    ledger sanity check
+├── delivery/<task-uuid>/                delivery bundles, one directory per task (tracked)
+├── scripts/                             smoke_llm.py (bridge ping), demo_flow.py (legacy path, no network)
+├── proxy/                               the Claude OAuth bridge every agent talks to (gitignored)
 ├── personal-docs/                       the author's own notes, incl. BIA_VERIFIER.md (gitignored)
 ├── LICENSE, pyproject.toml, requirements.txt
 └── README.md, FLOW.md, COMMANDS.md, DFD.md
@@ -133,11 +139,20 @@ python runner/agentloop/loop.py --task <name|uuid|path> --iterations N \
   [--timeout SECONDS] [--keep-jobs N]
 ```
 
-**Not yet proven end to end.** Every run of this loop so far has used harbor's `nop`
-agent, which starts the container and does nothing. The loop has NEVER been run with a
-real LLM agent authoring an optimizer end to end, and `runs/agentloop/` on this machine
-is empty. What is proven is the plumbing: config build/validation, launch, trial
-location and parsing, scoring, classification and the ledger.
+**Proven end to end on `tasks/minicalc`.** Four iterations ran with the real
+`claude-code` agent authoring `optimizer.py` in-container and training it: all four
+`graded_pass` on 2 seeds, `graded_step` 2665 → 2663 → 2653 → 2653, $5.20 total. The
+campaign is `runs/agentloop/17d66d37-7b3f-57d3-93ad-0263fc495147/` and was packaged to
+`delivery/17d66d37-7b3f-57d3-93ad-0263fc495147/`. That exercised what a `nop` agent
+cannot: `classify` against a real verifier `reason`, the reward regex against logs
+harbor actually collected, and history injection into a live container.
+
+Two things it did not prove. Reward saturates at 1.0 for any `graded_step` ≤
+`TARGET_STEPS`, and iteration 1 already landed 235 steps past that ceiling, so the
+agent's 2665 → 2653 improvement came from the injected history, not from the reward
+signal — a reward *climb* is still unvalidated. And no `bia/track3nov` campaign has
+been run with a real agent; that task costs ~2.2 h and ~$9 per iteration against
+minicalc's ~1 s and ~$1.30.
 
 ### Which agent runs in the container
 
