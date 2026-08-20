@@ -408,11 +408,14 @@ def run_iteration(i: int, base_cfg: dict, history: str, *,
 
     print(f"[{utc()}] iteration {i}: launching harbor job {job_name}", flush=True)
     t0 = time.time()
-    cmd = [str(harbor_bin), "run", "--config", str(cfg_path), "--export-traces"]
+    cmd = [str(harbor_bin), "run", "--config", str(cfg_path), "--export-traces", "--yes"]
     # --export-traces MUST be a CLI flag. JobConfig is pydantic extra="ignore", so an
     # `export_traces` key in the JSON would be silently DROPPED: the config would look
     # correct while harbor wrote no agent/trajectory.json, leaving the summariser and
     # the judge with nothing to read and every seed flagged verification_incomplete.
+    # --yes is load-bearing: a task.toml templating a host env var makes harbor prompt
+    # "Proceed? (Y/n)" on stdin, and capture_output below swallows the prompt, so the
+    # run hangs forever with an empty job.log, no container and no error.
     # Snapshot before launching so the finally below can remove exactly what this
     # iteration added. Taken after validation, so a rejected config launches nothing
     # and asks docker nothing.
@@ -504,14 +507,17 @@ def refine(task, iterations: int = 3, *, start_at: int | None = None,
            bridge_url: str | None = None,
            base_cfg_overrides: dict | None = None,
            timeout: float | None = None,
-           keep_jobs: int | None = None) -> list[dict]:
+           keep_jobs: int | None = None,
+           run_root: str | Path | None = None) -> list[dict]:
     """Drive `iterations` refinement rounds over `task`, appending each to the ledger.
 
     Returns every row the ledger holds afterwards, prior rows included, because the
     campaign -- not this call -- is the unit of meaning.
     """
     task_dir = resolve_task(str(task))
-    run_root = resolve_run_root(task_dir)
+    # Without this override a campaign whose ledger was written elsewhere is unreachable:
+    # the derived root is empty, so the loop silently restarts at iteration 1.
+    run_root = Path(run_root).expanduser().resolve() if run_root else resolve_run_root(task_dir)
     run_root.mkdir(parents=True, exist_ok=True)
     ledger = run_root / "ledger.jsonl"
     harbor_bin = harbor_bin or resolve_harbor_bin()
@@ -614,6 +620,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "N job dirs under run_root/jobs (default: unset, i.e. keep "
                          "ALL of them and delete nothing). The dir just produced is "
                          "never deleted.")
+    ap.add_argument("--run-root", default=None,
+                    help="campaign directory holding ledger.jsonl and history/ "
+                         "(default: derived as runs/agentloop/<task-uuid-or-slug>). "
+                         "Point this at an existing campaign to resume it, including "
+                         "one a different loop wrote.")
     return ap
 
 
@@ -628,7 +639,8 @@ def main(argv=None) -> int:
                   model_name=args.model,
                   bridge_url=args.bridge_url,
                   timeout=args.timeout,
-                  keep_jobs=args.keep_jobs)
+                  keep_jobs=args.keep_jobs,
+                  run_root=args.run_root)
 
     print("\n=== summary ===")
     print(f"  iterations in ledger : {len(rows)}")

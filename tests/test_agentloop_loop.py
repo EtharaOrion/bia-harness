@@ -561,6 +561,18 @@ def test_export_traces_is_a_cli_flag_and_not_a_config_key(
     assert not any("export" in k for k in written)
 
 
+def test_harbor_is_invoked_non_interactively(monkeypatch, base_cfg, tmp_path, task_dir):
+    """A task.toml templating a host env var makes harbor prompt on stdin.
+
+    capture_output swallows the prompt, so without --yes the run hangs forever
+    with an empty job.log, no container and no error line. Measured once at 20
+    minutes of silence before the cause was found.
+    """
+    _, calls = iterate(monkeypatch, 1, base_cfg, "", tmp_path, task_dir)
+
+    assert "--yes" in calls[0]["cmd"]
+
+
 def test_harbor_output_is_captured_not_inherited(
     monkeypatch, base_cfg, tmp_path, task_dir
 ):
