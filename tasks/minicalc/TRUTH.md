@@ -121,15 +121,17 @@ reported in `detail` instead. This coupling had never been exercised by any bund
    and nothing enforces it. If a campaign returns 1.0 on iteration 1, read the
    submitted `optimizer.py` before believing the ladder.
 
-## test_task_toml_parses fails for this bundle, as designed
+## Why the bundle declares schema_version = "1.4"
 
-`legacy/harness2/tests/test_task_toml.py::test_task_toml_parses` asserts a top-level
-`version = "1.0"`. This bundle declares `schema_version = "1.4"`, matching both
-bia/track3nov bundles and matching harbor 0.21, whose `TaskConfig` field IS
-`schema_version` and whose back-compat validator maps a top-level `version` onto it.
+Harbor 0.21's `TaskConfig` field is `schema_version`, defaulting to `"1.4"`
+(`harbor/models/task/config.py:796`), and a back-compat validator maps a legacy
+top-level `version` onto it (same file, line 826). This bundle declares
+`schema_version = "1.4"`, matching both bia/track3nov bundles and harbor itself.
 
-Declaring `version = "1.0"` would make the test green by telling harbor this bundle is
-schema 1.0 while it uses 1.4 features (`artifacts`, phase-scoped `network_mode`). The
-test is a stale assertion about an older schema. Adding this bundle moved the suite from
-`2 failed, 640 passed, 10 skipped` to `3 failed, 641 passed, 13 skipped` at that time; the
-new failure was that assertion and nothing else. Totals have grown since — see README.md.
+Declaring `version = "1.0"` instead would tell harbor this bundle is schema 1.0 while
+it uses 1.4 features (`artifacts`, phase-scoped `network_mode`).
+
+An older test, `legacy/harness2/tests/test_task_toml.py::test_task_toml_parses`,
+asserted a top-level `version = "1.0"` and so failed for every bundle using the current
+spelling. It was removed rather than satisfied; `test_task_name_is_declared` keeps its
+one still-valid assertion. See README.md for current suite counts.

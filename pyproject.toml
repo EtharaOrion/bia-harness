@@ -6,11 +6,10 @@ requires-python = ">=3.11"
 dependencies = []
 
 [tool.pytest.ini_options]
-# The suite is BOTH trees: the new pipeline under tests/, and the legacy
-# planner substrate that moved to legacy/harness2/tests/ alongside its modules.
-# Run the full suite with a bare `python -m pytest` (no path argument), which is
-# what picks up testpaths. `pytest tests/` now collects the new-pipeline half only.
-testpaths = ["tests", "legacy/harness2/tests"]
+# legacy/harness2/tests exists and passes, but is excluded on purpose: it guards
+# the planner path that agentloop does not use. Cover it with an explicit
+# `python -m pytest legacy/harness2/tests`.
+testpaths = ["tests"]
 norecursedirs = [
     "records",
     "legacy/harness1",

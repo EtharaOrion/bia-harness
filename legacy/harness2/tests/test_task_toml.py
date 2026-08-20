@@ -17,10 +17,8 @@ def _load(task_dir):
 
 
 @pytest.mark.parametrize("task_dir", TASK_DIRS, ids=TASK_IDS)
-def test_task_toml_parses(task_dir):
+def test_task_name_is_declared(task_dir):
     data = _load(task_dir)
-    schema = data.get("version") or data.get("harbor_schema_version")
-    assert schema == "1.0", f"task.toml must declare version or harbor_schema_version = '1.0'; got {schema!r}"
     name = data.get("task", {}).get("name") or data.get("name")
     assert isinstance(name, str) and name, "task name must be present in [task].name or top-level name"
 
