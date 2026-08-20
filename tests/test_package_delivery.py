@@ -86,11 +86,15 @@ def _model_for(model_name, i):
 
 
 def build_run_root(root, n_iters=3, verifier_style="txt", secret=FAKE_SECRET,
-                   task_dir=None, model_name="claude-opus-5"):
+                   task_dir=None, model_name="claude-opus-5", job_name="agentic"):
     """Build a synthetic agentloop run root with `n_iters` completed iterations.
 
     `model_name` is one name, or a `{iteration: name}` mapping / per-iteration
     sequence for a campaign whose iterations were run by different models.
+
+    `job_name` is the campaign's configured job name, which loop.py extends into
+    `<job_name>_iterNN` per iteration. It defaults to harbor_config's own default
+    so every caller that does not care keeps the shape it had.
     """
     task_dir = task_dir or build_task_dir(root)
     run_root = root / "runs" / "agentloop" / "17d66d37-7b3f-57d3-93ad-0263fc495147"
@@ -98,7 +102,7 @@ def build_run_root(root, n_iters=3, verifier_style="txt", secret=FAKE_SECRET,
     ledger_rows = []
 
     for i in range(1, n_iters + 1):
-        job = f"agentic_iter{i:02d}"
+        job = f"{job_name}_iter{i:02d}"
         trial_id = f"minicalc__TRIAL{i:02d}"
         trial_ids[i] = trial_id
         job_dir = run_root / "jobs" / job
@@ -271,6 +275,92 @@ def test_model_slug_is_derived_not_hardcoded(tmp_path):
     assert manifest["runs"][0]["model_slug"] == "claude-opus-4-5-preview"
     assert manifest["runs"][0]["model_name"] == "Claude Opus 4.5 (preview)"
     assert (out / "trajectories" / "claude-opus-4-5-preview" / "run_1").is_dir()
+
+
+# --------------------------------------------------------------------------
+# which job dirs are iterations
+# --------------------------------------------------------------------------
+#
+# A job dir is named `<job_name>_iterNN`, and `job_name` is a configurable field
+# of the harbor config (harbor_config.build_base_cfg defaults it to "agentic";
+# loop.py appends `_iterNN`). So the prefix is campaign data, not a constant.
+#
+# The anchor after the digits is load-bearing rather than decorative. A campaign
+# may hold a `<job_name>_iterNN-retest` dir next to its rollout iterations: that
+# is an oracle-replay job whose task bundle ships the answer under `solution/`,
+# and delivering it would put the answer in a client bundle. `_iterNN` must end
+# at the digits.
+
+JOB_NAMES_ACCEPTED = [
+    ("agentic_iter01", 1),          # the default, and the one real campaign on disk
+    ("agentic-gpt_iter01", 1),
+    ("agentic-gpt_iter02", 2),
+    ("agentic_gpt_iter03", 3),      # a job_name may itself carry an underscore
+    ("agentic.v2_iter10", 10),
+]
+
+JOB_NAMES_REJECTED = [
+    "agentic-gpt_iter01-retest",    # oracle replay -- must never reach a bundle
+    "agentic_iter01-retest",
+    "agentic-gpt_iter01.bak",
+    "agentic-gpt_iter",
+    "agentic-gpt",
+    "history",
+]
+
+
+@pytest.mark.parametrize("name,number", JOB_NAMES_ACCEPTED)
+def test_iteration_job_name_accepted(tmp_path, name, number):
+    (tmp_path / name).mkdir()
+    assert pd._iteration_jobs(tmp_path) == [(number, tmp_path / name)]
+
+
+@pytest.mark.parametrize("name", JOB_NAMES_REJECTED)
+def test_iteration_job_name_rejected(tmp_path, name):
+    (tmp_path / name).mkdir()
+    assert pd._iteration_jobs(tmp_path) == []
+
+
+def test_campaign_with_another_job_name_converts(tmp_path):
+    """The prefix is read from the dir name, not assumed to be `agentic`."""
+    run_root, _, trial_ids = build_run_root(tmp_path, n_iters=2, job_name="agentic-gpt")
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    assert [(r["iteration"], r["source_job"], r["run"]) for r in manifest["runs"]] == [
+        (1, "agentic-gpt_iter01", "run_1"),
+        (2, "agentic-gpt_iter02", "run_2"),
+    ]
+    out = tmp_path / "delivery" / run_root.name
+    assert sorted(p.name for p in (out / "trajectories" / "claude-opus-5").iterdir()) == [
+        "run_1", "run_2"]
+
+
+def test_retest_job_dir_is_not_delivered(tmp_path):
+    """A `-retest` sibling of a real iteration is left out of the bundle.
+
+    It is an oracle-replay job: its task bundle ships `solution/`, so converting
+    it would deliver the answer alongside the rollout runs it sits next to.
+    """
+    run_root, _, _ = build_run_root(tmp_path, n_iters=2, job_name="agentic-gpt")
+    jobs_dir = run_root / "jobs"
+    retest = jobs_dir / "agentic-gpt_iter01-retest"
+    shutil.copytree(jobs_dir / "agentic-gpt_iter01", retest)
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+
+    assert [r["source_job"] for r in manifest["runs"]] == [
+        "agentic-gpt_iter01", "agentic-gpt_iter02"]
+    assert not any(Path(r["source_trial_dir"]).is_relative_to(retest)
+                   for r in manifest["runs"])
+    assert retest.name not in [s["source_job"] for s in manifest["skipped"]]
+    assert len(manifest["runs"]) == 2
+
+
+def test_run_root_with_only_a_retest_job_is_an_error(tmp_path):
+    """Nothing convertible is left once the retest is excluded, and that is loud."""
+    run_root, _, _ = build_run_root(tmp_path, n_iters=1, job_name="agentic-gpt")
+    jobs_dir = run_root / "jobs"
+    (jobs_dir / "agentic-gpt_iter01").rename(jobs_dir / "agentic-gpt_iter01-retest")
+    with pytest.raises(pd.DeliveryError, match="no convertible iteration"):
+        pd.convert(run_root, tmp_path / "delivery")
 
 
 # --------------------------------------------------------------------------
@@ -1100,3 +1190,52 @@ def test_packages_normally_once_the_lock_is_released(tmp_path):
     holder.close()
     manifest = pd.convert(run_root, tmp_path / "delivery")
     assert [r["run"] for r in manifest["runs"]] == ["run_1", "run_2", "run_3"]
+
+
+def _flatten_jobs(run_root):
+    """Move job dirs out of `jobs/` and up beside the ledger, then drop `jobs/`.
+
+    Reproduces the layout ship-task/tools/refine.py wrote, where jobs_dir was
+    the run root itself rather than a `jobs/` subdirectory.
+    """
+    jobs = run_root / "jobs"
+    for child in list(jobs.iterdir()):
+        shutil.move(str(child), str(run_root / child.name))
+    jobs.rmdir()
+    return run_root
+
+
+def test_flat_layout_converts_when_jobs_sit_in_the_run_root(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path, n_iters=2, job_name="agentic-gpt")
+    _flatten_jobs(run_root)
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    assert [r["run"] for r in manifest["runs"]] == ["run_1", "run_2"]
+    assert [r["source_job"] for r in manifest["runs"]] == [
+        "agentic-gpt_iter01", "agentic-gpt_iter02"]
+
+
+def test_nested_jobs_dir_outranks_a_stray_top_level_job_dir(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path, n_iters=1, job_name="agentic")
+    decoy = run_root / "agentic_iter99"
+    shutil.copytree(run_root / "jobs" / "agentic_iter01", decoy)
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    assert [r["source_job"] for r in manifest["runs"]] == ["agentic_iter01"]
+
+
+def test_neither_layout_raises_and_names_both_places_searched(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path, n_iters=1)
+    shutil.rmtree(run_root / "jobs")
+    with pytest.raises(pd.DeliveryError) as exc:
+        pd.convert(run_root, tmp_path / "delivery")
+    assert str(run_root) in str(exc.value)
+    assert "jobs" in str(exc.value)
+
+
+def test_retest_job_dir_is_excluded_under_the_flat_layout(tmp_path):
+    run_root, _, _ = build_run_root(tmp_path, n_iters=2, job_name="agentic-gpt")
+    _flatten_jobs(run_root)
+    shutil.copytree(run_root / "agentic-gpt_iter01",
+                    run_root / "agentic-gpt_iter01-retest")
+    manifest = pd.convert(run_root, tmp_path / "delivery")
+    rows = manifest["runs"] + manifest["skipped"]
+    assert not any("retest" in str(r.get("source_job", "")) for r in rows)

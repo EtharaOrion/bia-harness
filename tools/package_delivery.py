@@ -63,7 +63,10 @@ from pathlib import Path
 
 CONVERTER_VERSION = "1.0.0"
 
-JOB_RE = re.compile(r"^agentic_iter(\d+)$")
+# `job_name` is configurable, so only the `_iterNN` suffix is fixed. The anchor
+# after the digits keeps `<job_name>_iterNN-retest` out: that is a separate
+# oracle-replay job, not iteration NN.
+JOB_RE = re.compile(r"^[A-Za-z0-9._-]+_iter(\d+)$")
 
 # The five paths a delivery root carries from the task bundle.
 TASK_BUNDLE_ENTRIES = ("task.toml", "instruction.md", "environment", "solution", "tests")
@@ -271,13 +274,35 @@ def _json_bytes(obj):
 
 
 def _iteration_jobs(jobs_dir):
-    """Every `agentic_iterNN` job dir as `(N, dir)`, ordered by N."""
+    """Every `<job_name>_iterNN` job dir as `(N, dir)`, ordered by N."""
     jobs = []
     for child in jobs_dir.iterdir():
         match = JOB_RE.match(child.name)
         if match and child.is_dir():
             jobs.append((int(match.group(1)), child))
     return sorted(jobs)
+
+
+def _resolve_jobs_dir(run_root):
+    """Where this campaign's job dirs live.
+
+    Two shapes exist because two different loops wrote these campaigns: this
+    repo's `runner/agentloop/loop.py` sets `jobs_dir = <run_root>/jobs`, while
+    `track3-pipeline/ship-task/tools/refine.py` set it to the run root itself,
+    so its job dirs sit beside `ledger.jsonl`. Nested stays PREFERRED: a run
+    root that has both must not have a stray top-level dir outrank the real
+    jobs/ tree. Do not collapse this to `run_root / "jobs"` -- that silently
+    stops converting every flat campaign.
+    """
+    nested = run_root / "jobs"
+    if nested.is_dir():
+        return nested
+    if _iteration_jobs(run_root):
+        return run_root
+    raise DeliveryError(
+        f"run root holds no job directories: {run_root} "
+        f"(looked in {nested} and in the run root itself)"
+    )
 
 
 def _newest_trial(job_dir):
@@ -631,9 +656,7 @@ def convert(run_root, out, force=False, dry_run=False):
 
     if not run_root.is_dir():
         raise DeliveryError(f"run root does not exist: {run_root}")
-    jobs_dir = run_root / "jobs"
-    if not jobs_dir.is_dir():
-        raise DeliveryError(f"run root has no jobs/ directory: {run_root}")
+    jobs_dir = _resolve_jobs_dir(run_root)
     _assert_campaign_finished(run_root)
 
     sources, skipped = [], []
